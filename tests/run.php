@@ -683,6 +683,87 @@ assertTrue($emState['code'] === 200 && !empty($emState['json']['emergency_stop']
 $emDeactivate = httpReq('POST', "$base/api/backtest.php", ['action' => 'emergency_stop', 'enabled' => false], $apiHeaders, true, $cookieFile);
 assertTrue($emDeactivate['code'] === 200 && empty($emDeactivate['json']['emergency_stop']), 'POST /api/backtest.php deactivates emergency stop');
 
+// 10. Adaptive Machine Learning Pipeline, EV Trade Filter & Training Control Center
+echo "\n10. Adaptive Machine Learning Pipeline, EV Trade Filter & Training Control Center\n";
+
+$marketSvc = new \App\Market\MarketDataService(null, 'XAUUSD');
+$testCandles = $marketSvc->candles('M15', 300);
+
+// 10a. FeatureExtractor
+$featExtractor = new \App\ML\FeatureExtractor();
+$extractedFeat = $featExtractor->extract(['M15' => $testCandles], [
+    'dir' => 1,
+    'entry' => 2400.0,
+    'sl' => 2390.0,
+    'tp1' => 2418.0,
+    'tp2' => 2435.0,
+    'spread' => 0.30,
+], time(), 'M15');
+assertTrue(count($extractedFeat['vector']) === 25, 'FeatureExtractor produces 25 normalized point-in-time features');
+assertTrue(isset($extractedFeat['map']['rsi_14_norm']) && isset($extractedFeat['map']['atr_ratio']), 'FeatureExtractor map contains technical and structure features');
+
+// 10b. DatasetGenerator
+$dsGen = new \App\ML\DatasetGenerator($featExtractor);
+$genData = $dsGen->generate($testCandles, 'XAUUSD', 'M15', ['horizon' => 36, 'spread' => 0.30]);
+assertTrue(is_array($genData['samples']), 'DatasetGenerator generates verified historical samples');
+assertTrue(isset($genData['stats']['total_candidates']), 'DatasetGenerator computes dataset execution statistics');
+
+// 10c. ProbabilisticModel
+$mlModel = new \App\ML\ProbabilisticModel();
+// Synthetic train samples for unit test verification
+$synthX = [
+    [1.0, 1.0, 0.6, 1.1, 0.2, 0.1, 1.0, 0.1, 1.0, 1.2, 0.8, 0.3, 1.0, 0.0, 0.4, 1.0, 0.0, 0.0, 0.4, 0.6, 1.2, 2.0, 3.5, 0.03, 1.0],
+    [-1.0, -1.0, 0.4, 1.8, -0.3, -0.2, 1.0, 0.8, 0.0, 0.5, 0.4, 0.8, 0.0, 1.0, 0.1, 0.0, 1.0, 0.0, 0.6, 0.8, 2.5, 1.5, 2.5, 0.08, -1.0],
+    [0.0, 0.0, 0.5, 0.6, 0.0, 0.0, 0.0, 0.9, 0.0, 0.2, 0.3, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.2, 0.4, 1.8, 1.8, 3.0, 0.05, 0.0],
+    [1.0, 1.0, 0.7, 1.0, 0.3, 0.2, 1.0, 0.2, 1.0, 1.5, 1.0, 0.2, 1.0, 0.0, 0.5, 0.0, 1.0, 0.0, 0.5, 0.6, 1.1, 2.2, 4.0, 0.02, 1.0],
+];
+$synthY = [1, 0, 0, 1];
+$fitMetrics = $mlModel->fit($synthX, $synthY, ['epochs' => 60, 'learning_rate' => 0.05]);
+assertTrue(!empty($fitMetrics['epochs']), 'ProbabilisticModel fits weights via regularized gradient descent');
+$predP = $mlModel->predictProb($synthX[0]);
+assertTrue($predP >= 0.01 && $predP <= 0.99, 'ProbabilisticModel outputs calibrated probability between 0.01 and 0.99');
+$evalRes = $mlModel->evaluate($synthX, $synthY);
+assertTrue(isset($evalRes['brier_score']) && isset($evalRes['confusion_matrix']), 'ProbabilisticModel evaluates Brier score and confusion matrix');
+
+// 10d. ExpectedValueFilter
+$evFilter = new \App\ML\ExpectedValueFilter($mlModel, 0.52, 0.20);
+// Sub-par setup should return NO_TRADE
+$poorEval = $evFilter->evaluate([
+    'direction' => 'BUY',
+    'entry'     => 2400.0,
+    'sl'        => 2390.0,
+    'tp1'       => 2405.0, // weak target
+    'tp2'       => 2410.0,
+    'spread'    => 1.50,   // excessive spread
+], $synthX[1]);
+assertTrue($poorEval['decision'] === 'NO_TRADE' && !$poorEval['authorized'], 'ExpectedValueFilter blocks low EV or high friction setups with NO_TRADE');
+
+// 10e. SignalFeedbackEngine & Error Diagnosis
+$feedback = new \App\ML\SignalFeedbackEngine();
+$diagLoss = $feedback->diagnoseFailure('loss', -1.05, 0.2, 1.1, ['session' => 'New York', 'regime' => 'ranging_consolidation'], ['has_displacement' => 0]);
+assertTrue(in_array($diagLoss['category'], [\App\ML\SignalFeedbackEngine::ERR_REGIME_MISMATCH, \App\ML\SignalFeedbackEngine::ERR_DISPLACEMENT_FAILURE, \App\ML\SignalFeedbackEngine::ERR_NORMAL_STOP], true), 'SignalFeedbackEngine categorizes failure into institutional error taxonomy');
+$errRep = $feedback->generateReport('XAUUSD');
+assertTrue(isset($errRep['by_category']), 'SignalFeedbackEngine generates aggregate failure report');
+
+// 10f. ModelManager Promotion & Rollback
+$modelMgr = new \App\ML\ModelManager();
+$vList = $modelMgr->listVersions(10);
+assertTrue(is_array($vList), 'ModelManager lists registered model versions');
+if (!empty($vList)) {
+    $firstId = (int)$vList[0]['id'];
+    assertTrue($modelMgr->promoteModel($firstId), 'ModelManager promotes model version to active');
+    $activeM = $modelMgr->getActiveModel();
+    assertTrue($activeM !== null && $activeM['id'] === $firstId, 'ModelManager returns active production model');
+}
+
+// 10g. Web & API Endpoints for Training Control Center
+$trainPage = httpReq('GET', "$base/training.php", null, [], false, $cookieFile);
+assertTrue($trainPage['code'] === 200 && str_contains($trainPage['body'], 'AI Training Control Center'), 'Authenticated GET /training.php renders HTTP 200');
+
+$trainApiStatus = httpReq('GET', "$base/api/training.php?action=status&symbol=XAUUSD", null, [], false, $cookieFile);
+assertTrue($trainApiStatus['code'] === 200 && !empty($trainApiStatus['json']['ok']), 'GET /api/training.php?action=status returns JSON system status');
+assertTrue(isset($trainApiStatus['json']['dataset_check']['total_candles']), 'Training API reports dataset health and missing bars check');
+
 @unlink($cookieFile);
 if (is_resource($proc)) {
     proc_terminate($proc);

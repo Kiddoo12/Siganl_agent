@@ -290,6 +290,16 @@ final class SignalTracker
             Database::insert('signal_outcomes', ['signal_id' => $sigId] + $outcomeData);
         }
 
+        // Phase 4: Diagnostic Feedback and Error Reporting on Closed Outcomes
+        if (in_array($outcome, ['win', 'loss', 'breakeven'], true)) {
+            try {
+                $feedback = new \App\ML\SignalFeedbackEngine();
+                $feedback->recordClosedTrade($sigId, $outcome, (float)($finalR ?? 0.0), (float)$mfe, (float)$mae);
+            } catch (\Throwable $e) {
+                // Non-blocking diagnostic record
+            }
+        }
+
         return $setupStatus !== $sig['setup_status'] || $outcome !== ($sig['outcome'] ?? 'pending');
     }
 

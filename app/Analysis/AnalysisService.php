@@ -449,6 +449,29 @@ final class AnalysisService
                 }
             }
 
+            // Record ML Feature Snapshot for Continuous Learning (Phase 4)
+            if ($signalId && !empty($sig['ml']['features'])) {
+                try {
+                    $feedback = new \App\ML\SignalFeedbackEngine();
+                    $feedback->recordSnapshot(
+                        $signalId,
+                        $symbol,
+                        (string)$sig['entry_tf'],
+                        (int)($sig['data_ref'] ?? $now),
+                        (float)$publicAnalysis['price'],
+                        (string)($publicAnalysis['regime'] ?? 'ranging_consolidation'),
+                        (string)($publicAnalysis['session'] ?? 'Active'),
+                        $sig['ml']['features'],
+                        $sig['ml']['calibrated_prob'] ?? null,
+                        $sig['ml']['expected_net_r'] ?? null,
+                        (string)($sig['ml']['decision'] ?? 'NO_TRADE'),
+                        implode(' | ', (array)($sig['ml']['reasons'] ?? []))
+                    );
+                } catch (\Throwable $e) {
+                    \App\Core\Logger::warning('Failed to record ML feature snapshot: ' . $e->getMessage());
+                }
+            }
+
             return ['analysis_id' => $analysisId, 'signal_id' => $signalId];
         });
     }

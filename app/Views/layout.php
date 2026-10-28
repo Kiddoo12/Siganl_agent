@@ -77,6 +77,7 @@ function renderHeader(string $title, string $activeNav = 'dashboard'): array
             <a href="mtf.php" class="nav-item <?= $activeNav === 'mtf' ? 'active' : '' ?>" title="Multi-Timeframe Analysis"><?= I18n::t('nav_mtf') ?></a>
             <a href="signals.php" class="nav-item <?= $activeNav === 'signals' ? 'active' : '' ?>" title="Signals &amp; Stats"><?= I18n::t('nav_signals') ?></a>
             <a href="backtest.php" class="nav-item <?= $activeNav === 'backtest' ? 'active' : '' ?>" title="Backtester"><?= I18n::t('nav_backtest') ?></a>
+            <a href="training.php" class="nav-item <?= $activeNav === 'training' ? 'active' : '' ?>" title="AI Training Control Center"><span class="nav-badge-ai">ML</span> <?= I18n::t('nav_training') ?></a>
             <a href="calendar.php" class="nav-item <?= $activeNav === 'calendar' ? 'active' : '' ?>" title="Economic Calendar"><?= I18n::t('nav_calendar') ?></a>
             <a href="calculator.php" class="nav-item <?= $activeNav === 'calculator' ? 'active' : '' ?>" title="Risk Calculator"><?= I18n::t('nav_calculator') ?></a>
             <a href="settings.php" class="nav-item <?= $activeNav === 'settings' ? 'active' : '' ?>" title="Settings"><?= I18n::t('nav_settings') ?></a>

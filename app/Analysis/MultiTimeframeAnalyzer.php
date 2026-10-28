@@ -146,6 +146,58 @@ final class MultiTimeframeAnalyzer
             }
         }
 
+        // ---- Phase 3 & 6: Machine Learning Feature Extraction & Expected Value Filter ----
+        if (!empty($signal['direction']) && in_array($signal['direction'], ['BUY', 'SELL'], true)) {
+            try {
+                $extractor = new \App\ML\FeatureExtractor($this->sessions);
+                $featExtracted = $extractor->extract(
+                    $closed,
+                    [
+                        'dir'    => $signal['direction'] === 'BUY' ? 1 : -1,
+                        'entry'  => (float)($signal['entry'] ?? $price),
+                        'sl'     => (float)($signal['sl'] ?? ($signal['direction'] === 'BUY' ? $price - 1.5 * $E['atr'] : $price + 1.5 * $E['atr'])),
+                        'tp1'    => isset($signal['tp1']) ? (float)$signal['tp1'] : null,
+                        'tp2'    => isset($signal['tp2']) ? (float)$signal['tp2'] : null,
+                        'spread' => (float)($ctx['spread'] ?? $this->scfg['assumed_spread']),
+                    ],
+                    $now,
+                    $entryTf,
+                    $poiTf
+                );
+
+                $modelMgr = new \App\ML\ModelManager();
+                $activeModelData = $modelMgr->getActiveModel();
+                $activeModel = $activeModelData['model_instance'] ?? null;
+
+                $evFilter = new \App\ML\ExpectedValueFilter($activeModel);
+                $mlEval = $evFilter->evaluate($signal, $featExtracted['vector'], $regimeAnalysis);
+
+                $signal['ml'] = [
+                    'calibrated_prob'  => $mlEval['calibrated_prob'],
+                    'expected_net_r'   => $mlEval['expected_net_r'],
+                    'decision'         => $mlEval['decision'],
+                    'authorized'       => $mlEval['authorized'],
+                    'target_r'         => $mlEval['target_r'],
+                    'friction_r'       => $mlEval['friction_r'],
+                    'model_version'    => $activeModelData['version_tag'] ?? 'baseline-prior',
+                    'reasons'          => $mlEval['reasons'],
+                    'features'         => $featExtracted['map'],
+                ];
+
+                if (!$mlEval['authorized']) {
+                    $signal['direction'] = 'WAIT';
+                    $signal['label'] = 'WAIT (ML FILTER REJECTED)';
+                    $signal['setup_status'] = 'potential';
+                    foreach ($mlEval['reasons'] as $rReason) {
+                        $signal['warnings'][] = 'ML Filter: ' . $rReason;
+                        $signal['reasons'][] = 'ML Filter: ' . $rReason;
+                    }
+                }
+            } catch (\Throwable $e) {
+                \App\Core\Logger::warning('ML EV Filter evaluation exception: ' . $e->getMessage());
+            }
+        }
+
         // ---- Lower timeframe confirmation ----
         $ltf = [];
         foreach (array_merge([$entryTf], $refineTfs) as $tf) {
