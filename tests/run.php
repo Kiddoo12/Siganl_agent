@@ -842,6 +842,213 @@ assertTrue($labEx['code'] === 200 && !empty($labEx['json']['annotations']), 'GET
 $labBm = httpReq('GET', "$base/api/vision_lab.php?action=benchmark", null, [], false, $cookieFile);
 assertTrue($labBm['code'] === 200 && !empty($labBm['json']['ok']), 'GET /api/vision_lab.php?action=benchmark returns benchmark results');
 
+// =========================================================================
+// 12. XAUUSD Historical Chart Dataset Builder & AI Training Pipeline
+// =========================================================================
+echo "\n12. XAUUSD Historical Chart Dataset Builder & AI Training Pipeline\n";
+
+$importer = new \App\Dataset\HistoricalImporter();
+
+// 12a. MT5 tab-separated export parsing
+$mt5Sample = "<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>\t<TICKVOL>\t<VOL>\t<SPREAD>\n" .
+    "2026.10.28\t10:00:00\t2740.50\t2742.80\t2739.20\t2741.90\t1500\t0\t15\n" .
+    "2026.10.28\t10:15:00\t2741.90\t2745.20\t2741.00\t2744.80\t1850\t0\t15\n" .
+    "2026.10.28\t10:30:00\t2744.80\t2746.50\t2743.00\t2745.20\t1420\t0\t15\n";
+
+$mt5Res = $importer->import($mt5Sample, 'XAUUSD', 'M15', ['tz_offset_hours' => 2.0, 'save_to_db' => false]);
+assertTrue(
+    $mt5Res['success'] === true
+    && $mt5Res['valid_candles_count'] === 3
+    && $mt5Res['source_type'] === 'mt5_tab'
+    && $mt5Res['candles'][0]['c'] === 2741.90
+    && $mt5Res['candles'][0]['t'] === (strtotime('2026-10-28 10:00:00 UTC') - 7200),
+    'HistoricalImporter parses MT5 tab-separated export and normalizes broker timezone to UTC'
+);
+
+// 12b. TradingView CSV with ISO timestamps and headers
+$tvSample = "time,open,high,low,close,Volume\n" .
+    "2026-10-28T12:00:00Z,2745.00,2747.50,2744.00,2746.50,2200\n" .
+    "2026-10-28T12:15:00Z,2746.50,2749.00,2745.50,2748.20,2800\n";
+
+$tvRes = $importer->import($tvSample, 'XAUUSD', 'M15', ['tz_offset_hours' => 0.0, 'save_to_db' => false]);
+assertTrue(
+    $tvRes['success'] === true
+    && $tvRes['valid_candles_count'] === 2
+    && $tvRes['source_type'] === 'tradingview'
+    && $tvRes['candles'][1]['h'] === 2749.00,
+    'HistoricalImporter parses TradingView CSV exports with ISO-8601 timestamps'
+);
+
+// 12c. Validation rejects invalid OHLC values and detects duplicates
+$badSample = "time,open,high,low,close,Volume\n" .
+    "2026-10-28T14:00:00Z,2745.00,2740.00,2748.00,2746.00,100\n" . // High < Low
+    "2026-10-28T14:15:00Z,2746.00,2748.00,2744.00,2747.00,150\n" . // Valid
+    "2026-10-28T14:15:00Z,2746.00,2748.00,2744.00,2747.00,150\n";  // Duplicate
+
+$badRes = $importer->import($badSample, 'XAUUSD', 'M15', ['save_to_db' => false]);
+assertTrue(
+    $badRes['valid_candles_count'] === 1
+    && $badRes['rejected_rows_count'] === 1
+    && $badRes['duplicate_rows_count'] === 1,
+    'HistoricalImporter rejects invalid OHLC logic and filters duplicate timestamps'
+);
+
+// 12d. MultiTimeframeResampler aggregates M1 into higher timeframes
+$resampler = new \App\Dataset\MultiTimeframeResampler();
+$baseM1 = [];
+$startM1 = strtotime('2026-10-28 00:00:00 UTC');
+for ($m = 0; $m < 60; $m++) {
+    $baseM1[] = [
+        't' => $startM1 + ($m * 60),
+        'o' => 2740.0 + ($m * 0.1),
+        'h' => 2740.0 + ($m * 0.1) + 0.5,
+        'l' => 2740.0 + ($m * 0.1) - 0.2,
+        'c' => 2740.0 + ($m * 0.1) + 0.2,
+        'v' => 50.0,
+    ];
+}
+$resampledM15 = $resampler->resampleToTimeframe($baseM1, 'M15');
+$resampledH1 = $resampler->resampleToTimeframe($baseM1, 'H1');
+assertTrue(count($resampledM15) === 4, 'MultiTimeframeResampler aggregates 60 M1 candles into exactly 4 M15 candles');
+assertTrue(count($resampledH1) === 1 && $resampledH1[0]['o'] === $baseM1[0]['o'], 'MultiTimeframeResampler preserves true first Open and cumulative bounds in H1 candle');
+
+// 12e. ChartWindowGenerator produces lookahead-safe sliding windows
+$windowGen = new \App\Dataset\ChartWindowGenerator();
+$mtfCollection = ['M15' => [], 'H1' => []];
+for ($k = 0; $k < 120; $k++) {
+    $mtfCollection['M15'][] = [
+        't' => $startM1 + ($k * 900),
+        'o' => 2740.0 + sin($k) * 2.0,
+        'h' => 2742.0 + sin($k) * 2.0,
+        'l' => 2738.0 + sin($k) * 2.0,
+        'c' => 2741.0 + sin($k) * 2.0,
+        'v' => 500.0,
+    ];
+}
+$windows = $windowGen->generateWindows($mtfCollection, 'M15', 50, 30, 15);
+assertTrue(!empty($windows) && count($windows[0]['exec_window']) === 50, 'ChartWindowGenerator produces synchronized 50-bar execution windows');
+assertTrue(count($windows[0]['forward_candles']) === 30, 'ChartWindowGenerator quarantines exactly 30 future bars for forward outcome verification');
+
+// 12f. PreliminaryPatternLabeler marks candidates as unverified preliminary
+$labeler = new \App\Dataset\PreliminaryPatternLabeler();
+$labelResult = $labeler->labelWindow($windows[0]['exec_window']);
+assertTrue(
+    isset($labelResult['annotations'])
+    && !empty($labelResult['annotations'])
+    && $labelResult['annotations'][0]['is_preliminary'] === 1
+    && $labelResult['annotations'][0]['source'] === 'ai_predicted',
+    'PreliminaryPatternLabeler generates candidate bounding boxes with is_preliminary=true and source=ai_predicted'
+);
+
+// 12g. BalancedScenarioGenerator evaluates execution and detects scenario
+$scenGen = new \App\Dataset\BalancedScenarioGenerator();
+$scenResult = $scenGen->evaluateScenario(
+    $windows[0]['exec_window'],
+    $windows[0]['forward_candles'],
+    $labelResult['candidate_setup'],
+    $labelResult
+);
+assertTrue(
+    in_array($scenResult['scenario_type'], ['trend_continuation', 'reversal', 'false_breakout', 'ranging_consolidation', 'news_volatility', 'no_trade'], true)
+    && in_array($scenResult['outcome'], ['win', 'loss', 'breakeven', 'expired', 'no_trade_verified'], true),
+    'BalancedScenarioGenerator evaluates forward execution and classifies institutional scenario'
+);
+
+// 12h. ChartImageGenerator creates standalone SVG graphics
+$imgGen = new \App\Dataset\ChartImageGenerator();
+$svgFile = $imgGen->renderAndSave('test_uuid_123', 'XAUUSD', 'M15', $windows[0]['exec_window'], $labelResult['annotations']);
+assertTrue(file_exists(APP_ROOT . '/' . $svgFile) && str_ends_with($svgFile, '.svg'), 'ChartImageGenerator creates standalone vector SVG chart image file');
+
+// 12i. PurgedChronologicalSplitter enforces 24h embargo window
+$splitter = new \App\Dataset\PurgedChronologicalSplitter();
+$dummyChronological = [];
+$splitBaseTs = strtotime('2026-09-01 00:00:00 UTC');
+for ($s = 0; $s < 100; $s++) {
+    $dummyChronological[] = [
+        'id' => $s + 1,
+        'chart_timestamp' => $splitBaseTs + ($s * 86400),
+    ];
+}
+$splitRes = $splitter->split($dummyChronological, 0.70, 0.15, 86400 * 2);
+assertTrue(
+    count($splitRes['train']) === 70
+    && !empty($splitRes['val'])
+    && !empty($splitRes['test'])
+    && !empty($splitRes['purged']),
+    'PurgedChronologicalSplitter drops overlapping embargo buffers between Train and Validation partitions'
+);
+
+// 12j. DecoupledEvaluator separates visual metrics from trade metrics
+$evaluator = new \App\Dataset\DecoupledEvaluator();
+$evalDataset = [
+    [
+        'predictions' => [['pattern_type' => 'FVG_BULL', 'box_x' => 0.20, 'box_y' => 0.40, 'box_w' => 0.30, 'box_h' => 0.10, 'price_level' => 2745.0]],
+        'ground_truth' => [['pattern_type' => 'FVG_BULL', 'box_x' => 0.22, 'box_y' => 0.41, 'box_w' => 0.28, 'box_h' => 0.09, 'price_level' => 2745.3]],
+        'trade_decision' => 'BUY',
+        'outcome' => 'win',
+        'realized_r' => 2.50,
+        'predicted_prob' => 0.85,
+    ],
+    [
+        'predictions' => [['pattern_type' => 'OB_BEAR', 'box_x' => 0.50, 'box_y' => 0.20, 'box_w' => 0.20, 'box_h' => 0.10, 'price_level' => 2760.0]],
+        'ground_truth' => [['pattern_type' => 'OB_BEAR', 'box_x' => 0.51, 'box_y' => 0.21, 'box_w' => 0.19, 'box_h' => 0.09, 'price_level' => 2759.5]],
+        'trade_decision' => 'SELL',
+        'outcome' => 'loss',
+        'realized_r' => -1.00,
+        'predicted_prob' => 0.40,
+    ],
+    [
+        'predictions' => [],
+        'ground_truth' => [],
+        'trade_decision' => 'NO_TRADE',
+        'outcome' => 'no_trade_verified',
+        'realized_r' => 0.0,
+    ],
+];
+$decoupledScore = $evaluator->evaluate($evalDataset, 0.35);
+assertTrue(
+    $decoupledScore['visual_metrics']['f1_pct'] === 100.0
+    && $decoupledScore['visual_metrics']['price_mae_pts'] > 0
+    && $decoupledScore['trade_metrics']['win_rate_pct'] === 50.0
+    && $decoupledScore['trade_metrics']['profit_factor'] === 2.5
+    && $decoupledScore['trade_metrics']['no_trade_cases'] === 1,
+    'DecoupledEvaluator computes independent visual F1 accuracy and trade execution metrics without conflation'
+);
+
+// 12k. DatasetManager Overview & Versioning
+$datasetManager = new \App\Dataset\DatasetManager();
+$overview = $datasetManager->getDatasetOverview();
+assertTrue(
+    isset($overview['total_examples'])
+    && isset($overview['label_quality_pct'])
+    && isset($overview['splits'])
+    && isset($overview['scenarios']),
+    'DatasetManager returns complete global dataset overview metrics'
+);
+
+// 12l. ChartTrainingPipeline trains model weights and registers model version
+$trainingPipeline = new \App\Dataset\ChartTrainingPipeline();
+$testModelTag = 'xau_vision_test_' . time();
+$trainPipelineResult = $trainingPipeline->train($testModelTag, ['learning_rate' => 0.05, 'epochs' => 10]);
+assertTrue(
+    $trainPipelineResult['success'] === true
+    && str_contains($trainPipelineResult['architecture_disclosure'], 'Zero look-ahead bias'),
+    'ChartTrainingPipeline fits calibrated weights on purged partitions and discloses architecture transparently'
+);
+
+$rollbackResult = $trainingPipeline->rollbackToVersion($testModelTag);
+assertTrue($rollbackResult['success'] === true, 'ChartTrainingPipeline supports 1-click model rollback to version');
+
+// 12m. Web Page & API Endpoints for Dataset Builder
+$builderPage = httpReq('GET', "$base/dataset_builder.php", null, [], false, $cookieFile);
+assertTrue($builderPage['code'] === 200 && str_contains($builderPage['body'], 'XAUUSD Historical Dataset Builder'), 'Authenticated GET /dataset_builder.php renders HTTP 200');
+
+$apiOverview = httpReq('GET', "$base/api/dataset.php?action=overview", null, [], false, $cookieFile);
+assertTrue($apiOverview['code'] === 200 && $apiOverview['json']['success'] === true, 'GET /api/dataset.php?action=overview returns dataset overview JSON');
+
+$apiList = httpReq('GET', "$base/api/dataset.php?action=list_examples&limit=5", null, [], false, $cookieFile);
+assertTrue($apiList['code'] === 200 && isset($apiList['json']['total']), 'GET /api/dataset.php?action=list_examples returns paginated example list');
+
 @unlink($cookieFile);
 if (is_resource($proc)) {
     proc_terminate($proc);

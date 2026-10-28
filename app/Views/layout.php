@@ -73,6 +73,7 @@ function renderHeader(string $title, string $activeNav = 'dashboard'): array
             <a href="live.php" class="nav-item <?= $activeNav === 'live' ? 'active' : '' ?>" title="Live Market"><?= I18n::t('nav_live') ?></a>
             <a href="vision.php" class="nav-item <?= $activeNav === 'vision' ? 'active' : '' ?>" title="AI Chart Vision"><span class="nav-badge-ai">AI</span> <?= I18n::t('nav_vision') ?></a>
             <a href="vision_lab.php" class="nav-item <?= $activeNav === 'vision_lab' ? 'active' : '' ?>" title="AI Chart Training Lab"><span class="nav-badge-ai">LAB</span> <?= I18n::t('nav_vision_lab') ?></a>
+            <a href="dataset_builder.php" class="nav-item <?= $activeNav === 'dataset_builder' ? 'active' : '' ?>" title="XAUUSD Dataset Builder"><span class="nav-badge-ai">DATA</span> <?= I18n::t('nav_dataset_builder') ?></a>
             <a href="strategies.php" class="nav-item <?= $activeNav === 'strategies' ? 'active' : '' ?>" title="ICT Strategy Library"><?= I18n::t('nav_strategies') ?></a>
             <a href="scanner.php" class="nav-item <?= $activeNav === 'scanner' ? 'active' : '' ?>" title="Signal Scanner"><?= I18n::t('nav_scanner') ?></a>
             <a href="mtf.php" class="nav-item <?= $activeNav === 'mtf' ? 'active' : '' ?>" title="Multi-Timeframe Analysis"><?= I18n::t('nav_mtf') ?></a>

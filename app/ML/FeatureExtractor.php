@@ -42,6 +42,11 @@ final class FeatureExtractor
         'volatility_regime_num',
     ];
 
+    public static function featureNames(): array
+    {
+        return self::FEATURE_NAMES;
+    }
+
     private SessionService $sessions;
 
     public function __construct(?SessionService $sessions = null)

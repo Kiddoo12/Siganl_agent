@@ -355,6 +355,21 @@ final class ProbabilisticModel
         return $rankSum / ($nPos * $nNeg);
     }
 
+    public function getWeights(): array
+    {
+        return [
+            'weights' => $this->weights,
+            'bias' => $this->bias,
+            'platt_a' => $this->plattA,
+            'platt_b' => $this->plattB,
+        ];
+    }
+
+    public function predictProbability(array $x): float
+    {
+        return $this->predictProb($x);
+    }
+
     public function serialize(): array
     {
         return [
