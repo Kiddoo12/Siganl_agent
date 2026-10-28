@@ -1,0 +1,23 @@
+# GOLD SMC AI PRO - Apache protection rules
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    # Block internal directories from web access
+    RewriteRule ^(app|config|database|storage|tests|bin|docs)(/|$) - [F,L]
+    # Block dotfiles (.env, .git, ...)
+    RewriteRule (^|/)\. - [F,L]
+    # Block markdown / sql / log / example files
+    RewriteRule \.(md|sql|log|example|lock|json)$ - [F,L,NC]
+</IfModule>
+
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
+</IfModule>

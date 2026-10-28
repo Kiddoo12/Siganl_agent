@@ -1,0 +1,34 @@
+# Environment & secrets
+.env
+*.env.local
+
+# Storage runtime data
+storage/cache/*
+!storage/cache/.gitkeep
+storage/logs/*
+!storage/logs/.gitkeep
+storage/uploads/*
+!storage/uploads/.gitkeep
+!storage/uploads/vision/
+storage/uploads/vision/*
+!storage/uploads/vision/.gitkeep
+
+# Tests & session cookies
+tests/.cookie.txt
+tests/tmp/
+
+# System and OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.log
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Composer / NPM (if added later)
+vendor/
+node_modules/
