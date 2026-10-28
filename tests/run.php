@@ -764,6 +764,84 @@ $trainApiStatus = httpReq('GET', "$base/api/training.php?action=status&symbol=XA
 assertTrue($trainApiStatus['code'] === 200 && !empty($trainApiStatus['json']['ok']), 'GET /api/training.php?action=status returns JSON system status');
 assertTrue(isset($trainApiStatus['json']['dataset_check']['total_candles']), 'Training API reports dataset health and missing bars check');
 
+// 11. AI Chart Training Lab, Vision RAG, Pattern Benchmarks & Multi-Timeframe Confluence
+echo "\n11. AI Chart Training Lab, Vision RAG, Pattern Benchmarks & Multi-Timeframe Confluence\n";
+
+// 11a. VisionAnnotationEngine Spatial IoU & Matching
+$boxA = ['x' => 0.20, 'y' => 0.50, 'w' => 0.30, 'h' => 0.10];
+$boxB = ['x' => 0.22, 'y' => 0.51, 'w' => 0.28, 'h' => 0.09];
+$iou = \App\Vision\VisionAnnotationEngine::computeIou($boxA, $boxB);
+assertTrue($iou > 0.60 && $iou <= 1.0, 'VisionAnnotationEngine computes accurate visual bounding box IoU');
+
+$annEngine = new \App\Vision\VisionAnnotationEngine();
+$matchRes = $annEngine->matchAnnotations([
+    ['pattern_type' => 'FVG_BULL', 'box_x' => 0.20, 'box_y' => 0.50, 'box_w' => 0.30, 'box_h' => 0.10, 'price_level' => 2405.0],
+], [
+    ['pattern_type' => 'FVG_BULL', 'box_x' => 0.22, 'box_y' => 0.51, 'box_w' => 0.28, 'box_h' => 0.09, 'price_level' => 2405.5],
+], 0.40);
+assertTrue(count($matchRes['matches']) === 1, 'VisionAnnotationEngine matches predicted boxes with ground truth');
+assertTrue($matchRes['price_mae'] <= 0.60, 'VisionAnnotationEngine calculates price localization error');
+
+// 11b. VisionRagService Few-Shot Exemplar Grounding
+$ragService = new \App\Vision\VisionRagService();
+$ragData = $ragService->retrieveExemplars('XAUUSD', 'M15', 3);
+assertTrue(is_array($ragData['exemplars']), 'VisionRagService retrieves verified ground-truth exemplars');
+assertTrue(!empty($ragData['prompt_context']), 'VisionRagService formats few-shot ground-truth context for vision prompts');
+
+// 11c. VisionBenchmarkService Metrics & Decoupling
+$benchmarker = new \App\Vision\VisionBenchmarkService();
+$bmResult = $benchmarker->runBenchmark('all');
+assertTrue(!empty($bmResult['ok']), 'VisionBenchmarkService executes evaluation benchmark');
+assertTrue(isset($bmResult['visual_accuracy']['overall_f1']), 'VisionBenchmarkService measures overall visual recognition F1 score');
+assertTrue(isset($bmResult['trade_performance']['win_rate']), 'VisionBenchmarkService decouples trade outcome win rate from visual accuracy');
+
+// 11d. DatasetExporter (JSONL & COCO formats)
+$exporter = new \App\Vision\DatasetExporter();
+$jsonlExport = $exporter->exportJsonl('all');
+assertTrue(str_contains($jsonlExport, 'example_uuid') || str_contains($jsonlExport, 'vte_'), 'DatasetExporter produces Vision-Language JSONL lines');
+$cocoExport = $exporter->exportCoco('all');
+assertTrue(isset($cocoExport['categories']) && isset($cocoExport['images']), 'DatasetExporter produces valid COCO object detection format');
+
+// 11e. ChartVisionService Standard 19-Element Report
+$dummyReport = [
+    'trade_direction'   => 'BUY',
+    'market_bias'       => 'Bullish',
+    'market_structure'  => 'CHoCH + Displacement',
+    'entry_zone'        => ['min' => 2404.0, 'max' => 2406.0, 'ref_entry' => 2405.0],
+    'stop_loss'         => ['price' => 2398.0],
+    'take_profit'       => [
+        'tp1' => ['price' => 2415.0, 'rr' => 2.0],
+        'tp2' => ['price' => 2425.0, 'rr' => 3.5],
+        'tp3' => ['price' => 2435.0, 'rr' => 5.0],
+    ],
+    'liquidity_targets' => [
+        'bsl' => [['level' => 2420.0, 'label' => 'Session High']],
+        'ssl' => [['level' => 2398.0, 'label' => 'Session Low']],
+    ],
+    'fvg_ob_zones'      => [
+        'fvgs' => [['type' => 'Bullish FVG', 'top' => 2406.0, 'bottom' => 2404.0]],
+    ],
+    'supporting_evidence' => ['London SSL swept cleanly'],
+    'setup_invalidations' => ['Close below 2398.0'],
+    'detected_strategy'   => 'ICT 2022 Mentorship Model',
+];
+$stdReport = \App\Analysis\ChartVisionService::formatStandardReport($dummyReport, 'XAUUSD', 'M15');
+assertTrue(str_contains($stdReport, 'INSTRUMENT: XAUUSD') && str_contains($stdReport, 'TRADE DECISION: BUY'), 'ChartVisionService formats full 19-element standard report');
+assertTrue(str_contains($stdReport, 'BUY-SIDE LIQUIDITY:') && str_contains($stdReport, 'SELL-SIDE LIQUIDITY:'), 'ChartVisionService includes all liquidity and structure points');
+
+// 11f. Web & API Endpoints for Vision Lab
+$labPage = httpReq('GET', "$base/vision_lab.php", null, [], false, $cookieFile);
+assertTrue($labPage['code'] === 200 && str_contains($labPage['body'], 'AI Chart Training Lab'), 'Authenticated GET /vision_lab.php renders HTTP 200');
+
+$labList = httpReq('GET', "$base/api/vision_lab.php?action=list", null, [], false, $cookieFile);
+assertTrue($labList['code'] === 200 && is_array($labList['json']['examples']), 'GET /api/vision_lab.php?action=list returns example dataset');
+
+$labEx = httpReq('GET', "$base/api/vision_lab.php?action=get_example&id=1", null, [], false, $cookieFile);
+assertTrue($labEx['code'] === 200 && !empty($labEx['json']['annotations']), 'GET /api/vision_lab.php?action=get_example returns annotations and match evaluation');
+
+$labBm = httpReq('GET', "$base/api/vision_lab.php?action=benchmark", null, [], false, $cookieFile);
+assertTrue($labBm['code'] === 200 && !empty($labBm['json']['ok']), 'GET /api/vision_lab.php?action=benchmark returns benchmark results');
+
 @unlink($cookieFile);
 if (is_resource($proc)) {
     proc_terminate($proc);
