@@ -51,8 +51,17 @@ final class RateLimiter
     public static function clear(string $key): void
     {
         try {
-            $key = substr(hash('sha256', $key), 0, 64);
-            Database::query('DELETE FROM rate_limits WHERE rl_key = ?', [$key]);
+            $hashed = substr(hash('sha256', $key), 0, 64);
+            Database::query('DELETE FROM rate_limits WHERE rl_key = ? OR rl_key = ?', [$hashed, $key]);
+        } catch (\Throwable $e) {
+            // fail-safe ignore
+        }
+    }
+
+    public static function clearAll(): void
+    {
+        try {
+            Database::query('DELETE FROM rate_limits');
         } catch (\Throwable $e) {
             // fail-safe ignore
         }

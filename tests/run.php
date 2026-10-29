@@ -315,7 +315,7 @@ $doLogin = httpReq('POST', "$base/login.php", [
 assertTrue($doLogin['code'] === 302, 'POST /login.php authenticates admin and redirects to index.php');
 
 // 6d. Verify all authenticated web pages render HTTP 200 and extract refreshed session CSRF token
-foreach (['index.php', 'signals.php', 'backtest.php', 'calendar.php', 'settings.php', 'admin.php', 'vision.php', 'strategies.php', 'scanner.php', 'mtf.php', 'live.php', 'calculator.php'] as $page) {
+foreach (['index.php', 'chat.php', 'signals.php', 'backtest.php', 'calendar.php', 'settings.php', 'admin.php', 'vision.php', 'strategies.php', 'scanner.php', 'mtf.php', 'live.php', 'calculator.php'] as $page) {
     $r = httpReq('GET', "$base/$page", null, [], false, $cookieFile);
     if ($page === 'index.php' && preg_match('/meta name="csrf-token" content="([a-f0-9]+)"/', $r['body'], $cm)) {
         $csrf = $cm[1];
@@ -426,6 +426,65 @@ $visPost = httpReq('POST', "$base/api/vision_analyze.php", [
     '_csrf'        => $csrf,
 ], ['X-CSRF-Token: ' . $csrf], false, $cookieFile);
 assertTrue($visPost['code'] === 200 && !empty($visPost['json']['ok']) && !empty($visPost['json']['report']['market_bias']), 'POST /api/vision_analyze.php analyzes chart screenshot with CSRF protection');
+
+// 7e. Candle Range Theory (CRT) Engine
+$crtEngine = new \App\SMC\CrtEngine();
+$mockCrtCandles = [
+    ['t' => 1000, 'o' => 2400.0, 'h' => 2410.0, 'l' => 2390.0, 'c' => 2405.0],
+    ['t' => 1060, 'o' => 2405.0, 'h' => 2412.0, 'l' => 2388.0, 'c' => 2402.0],
+    ['t' => 1120, 'o' => 2402.0, 'h' => 2415.0, 'l' => 2400.0, 'c' => 2410.0],
+    ['t' => 1180, 'o' => 2410.0, 'h' => 2420.0, 'l' => 2400.0, 'c' => 2415.0], // Ref range: H 2420, L 2400, EQ 2410
+    ['t' => 1240, 'o' => 2415.0, 'h' => 2416.0, 'l' => 2395.0, 'c' => 2405.0],  // Pierced below 2400, closed 2405 (> 2400)
+];
+$crtRes = $crtEngine->analyze($mockCrtCandles);
+assertTrue($crtRes['ok'] === true && $crtRes['phase'] === 'bullish_sweep_reclaim', 'CrtEngine detects bullish range sweep and reclaim');
+assertTrue(isset($crtRes['reference_candle']['range_eq']) && $crtRes['reference_candle']['range_eq'] == 2410.0, 'CrtEngine computes exact 50% Equilibrium price');
+assertTrue(!empty($crtRes['trade_setup']['tp1']) && $crtRes['trade_setup']['direction'] === 'BUY', 'CrtEngine generates BUY setup targeting 50% EQ');
+
+// 7f. Strategy-Selected AI Vision Analysis (CRT, ICT, SMC)
+$visCrtPost = httpReq('POST', "$base/api/vision_analyze.php", [
+    'image_base64'  => 'data:image/png;base64,' . $testPngBase64,
+    'symbol'        => 'XAUUSD',
+    'timeframe'     => 'M15',
+    'strategy_mode' => 'CRT',
+    '_csrf'         => $csrf,
+], ['X-CSRF-Token: ' . $csrf], false, $cookieFile);
+assertTrue($visCrtPost['code'] === 200 && str_contains($visCrtPost['json']['report']['strategy_mode'] ?? '', 'CRT'), 'POST /api/vision_analyze.php supports CRT strategy mode');
+
+// 7g. AI Chat Analyst Endpoint with Strategy Selection (ICT, SMC, CRT, ALL)
+$chatCrt = httpReq('POST', "$base/api/chat.php", [
+    'action'        => 'send',
+    'message'       => 'Analyze current CRT setup on XAUUSD',
+    'strategy_mode' => 'CRT',
+    'symbol'        => 'XAUUSD',
+    'timeframe'     => 'M15',
+    '_csrf'         => $csrf,
+], ['X-CSRF-Token: ' . $csrf], false, $cookieFile);
+assertTrue($chatCrt['code'] === 200 && !empty($chatCrt['json']['ok']) && $chatCrt['json']['strategy_mode'] === 'CRT', 'POST /api/chat.php processes CRT strategy selection');
+assertTrue(str_contains($chatCrt['json']['reply'], 'Candle Range Theory'), 'AI Chat outputs detailed CRT analysis');
+
+$chatIct = httpReq('POST', "$base/api/chat.php", [
+    'action'        => 'send',
+    'message'       => 'Check ICT Silver Bullet and FVG',
+    'strategy_mode' => 'ICT',
+    'symbol'        => 'XAUUSD',
+    'timeframe'     => 'M15',
+    '_csrf'         => $csrf,
+], ['X-CSRF-Token: ' . $csrf], false, $cookieFile);
+assertTrue($chatIct['code'] === 200 && $chatIct['json']['strategy_mode'] === 'ICT', 'POST /api/chat.php processes ICT strategy selection');
+
+$chatSmc = httpReq('POST', "$base/api/chat.php", [
+    'action'        => 'send',
+    'message'       => 'Check SMC BOS and Order Blocks',
+    'strategy_mode' => 'SMC',
+    'symbol'        => 'XAUUSD',
+    'timeframe'     => 'M15',
+    '_csrf'         => $csrf,
+], ['X-CSRF-Token: ' . $csrf], false, $cookieFile);
+assertTrue($chatSmc['code'] === 200 && $chatSmc['json']['strategy_mode'] === 'SMC', 'POST /api/chat.php processes SMC strategy selection');
+
+$chatHist = httpReq('GET', "$base/api/chat.php?action=history&symbol=XAUUSD", null, [], false, $cookieFile);
+assertTrue($chatHist['code'] === 200 && is_array($chatHist['json']['history']) && count($chatHist['json']['history']) >= 3, 'GET /api/chat.php?action=history returns conversation log');
 
 $createdId = (int)($visPost['json']['analysis_id'] ?? 0);
 $tgPost = httpReq('POST', "$base/api/vision_telegram.php", [

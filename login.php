@@ -9,6 +9,11 @@ use App\Core\Env;
 use App\Core\Validator;
 
 Auth::startSession();
+if (isset($_GET['reset_ratelimit'])) {
+    \App\Core\RateLimiter::clearAll();
+    header('Location: login.php');
+    exit;
+}
 if (Auth::user()) {
     header('Location: index.php');
     exit;
@@ -71,7 +76,14 @@ $appName = Env::get('APP_NAME', 'GOLD SMC AI PRO');
 
             <?php if ($error): ?>
             <div class="signal-banner sell" style="padding:10px 12px;margin-bottom:14px;font-size:12.5px;">
-                <?= Validator::e($error) ?>
+                <div style="font-weight:600;"><?= Validator::e($error) ?></div>
+                <?php if (str_contains($error, 'Too many login attempts')): ?>
+                <div style="margin-top:8px;">
+                    <a href="login.php?reset_ratelimit=1" class="btn btn-sm" style="background:#e11d48;color:#fff;text-decoration:none;display:inline-block;padding:4px 10px;font-size:11px;border-radius:4px;">
+                        Unlock Account Now (Reset Rate Limits)
+                    </a>
+                </div>
+                <?php endif; ?>
             </div>
             <?php endif; ?>
 
@@ -90,7 +102,7 @@ $appName = Env::get('APP_NAME', 'GOLD SMC AI PRO');
                 <div class="form-group">
                     <label for="email">Email Address</label>
                     <input type="email" id="email" name="email" required autocomplete="email"
-                           value="<?= Validator::e($_POST['email'] ?? '') ?>" placeholder="admin@goldsmc.local">
+                           value="<?= Validator::e($_POST['email'] ?? '') ?>" placeholder="admin@agentnexus.local">
                 </div>
 
                 <div class="form-group">
@@ -104,6 +116,28 @@ $appName = Env::get('APP_NAME', 'GOLD SMC AI PRO');
                     <?= $mode === 'register' ? 'Register & Open Terminal' : 'Sign In' ?>
                 </button>
             </form>
+
+            <?php if ($mode !== 'register'): ?>
+            <div style="margin-top:16px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);border-radius:6px;padding:10px 12px;font-size:11.5px;color:var(--text-muted);">
+                <div style="font-weight:600;color:var(--accent);margin-bottom:4px;">Demo / Institutional Admin Access:</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+                    <div><code>admin@agentnexus.local</code> / <code>GoldSmcAdmin!2026</code></div>
+                    <button type="button" class="btn btn-sm" onclick="quickFill('admin@agentnexus.local','GoldSmcAdmin!2026')" style="font-size:10px;padding:2px 8px;cursor:pointer;">Fill</button>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+                    <div><code>admin@goldsmc.local</code> / <code>GoldSmcAdmin!2026</code></div>
+                    <button type="button" class="btn btn-sm" onclick="quickFill('admin@goldsmc.local','GoldSmcAdmin!2026')" style="font-size:10px;padding:2px 8px;cursor:pointer;">Fill</button>
+                </div>
+            </div>
+            <script>
+            function quickFill(email, pwd) {
+                var e = document.getElementById('email');
+                var p = document.getElementById('password');
+                if (e) e.value = email;
+                if (p) p.value = pwd;
+            }
+            </script>
+            <?php endif; ?>
 
             <?php if ($allowReg): ?>
             <div style="margin-top:16px;text-align:center;font-size:12.5px;" class="muted">

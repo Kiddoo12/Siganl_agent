@@ -2,6 +2,8 @@
 
 Institutional rule-based **Smart Money Concepts (SMC)**, **Inner Circle Trader (ICT)** multi-timeframe analysis, quantitative validation backtester, AI Chart Vision analyzer, position size calculator, and economic calendar filter for **Spot Gold (`XAUUSD`)**, Crypto (`BTCUSD`), Forex (`EURUSD`, `GBPUSD`, `USDJPY`), and Major Indices (`US30`, `NAS100`).
 
+> 🚀 **Live Interactive Web Terminal & AI Chat Workstation:** [https://kiddoo12.github.io/Siganl_agent/index.html](https://kiddoo12.github.io/Siganl_agent/index.html)
+
 ---
 
 ## 🌟 Key Architecture & Capabilities

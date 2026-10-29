@@ -9,6 +9,7 @@ use App\Core\Http;
 use App\Core\Logger;
 use App\Core\Notifier;
 use App\Market\MarketDataService;
+use App\SMC\CrtEngine;
 use App\SMC\IctEngine;
 use App\SMC\SmcEngine;
 
@@ -103,7 +104,8 @@ final class ChartVisionService
         ?float $manualPrice = null,
         ?string $broker = null,
         ?string $chartTz = null,
-        ?int $userId = null
+        ?int $userId = null,
+        string $strategyMode = 'ALL'
     ): array {
         if (!file_exists($imagePath)) {
             throw new \InvalidArgumentException('Chart image file does not exist at ' . $imagePath);
@@ -111,6 +113,10 @@ final class ChartVisionService
 
         $symbol = MarketDataService::normalizeSymbol($symbol);
         $timeframe = strtoupper(trim($timeframe)) ?: 'M15';
+        $strategyMode = strtoupper(trim($strategyMode)) ?: 'ALL';
+        if (!in_array($strategyMode, ['ICT', 'SMC', 'CRT', 'ALL'], true)) {
+            $strategyMode = 'ALL';
+        }
 
         // Read image bytes for base64 transmission
         $imageBytes = file_get_contents($imagePath);
@@ -134,7 +140,7 @@ final class ChartVisionService
         // 1. Try Gemini Vision if key exists
         if ($geminiKey !== '') {
             try {
-                $report = self::callGeminiVision($geminiKey, $base64, $mime, $symbol, $timeframe, $refPrice, $broker, $chartTz);
+                $report = self::callGeminiVision($geminiKey, $base64, $mime, $symbol, $timeframe, $refPrice, $broker, $chartTz, $strategyMode);
                 $aiModelUsed = 'gemini-1.5-flash';
             } catch (\Throwable $e) {
                 Logger::warning('Gemini vision API error, falling back to heuristic engine', ['error' => $e->getMessage()]);
@@ -144,7 +150,7 @@ final class ChartVisionService
         // 2. Try OpenAI Vision if configured
         if (!$report && $aiProvider === 'openai' && $openAiKey !== '') {
             try {
-                $report = self::callOpenAiVision($openAiKey, $base64, $mime, $symbol, $timeframe, $refPrice, $broker, $chartTz);
+                $report = self::callOpenAiVision($openAiKey, $base64, $mime, $symbol, $timeframe, $refPrice, $broker, $chartTz, $strategyMode);
                 $aiModelUsed = 'gpt-4o-mini';
             } catch (\Throwable $e) {
                 Logger::warning('OpenAI vision API error, falling back to heuristic engine', ['error' => $e->getMessage()]);
@@ -153,13 +159,13 @@ final class ChartVisionService
 
         // 3. Robust Deterministic Heuristic Analysis (always guaranteed to work)
         if (!$report) {
-            $report = self::generateHeuristicAnalysis($symbol, $timeframe, $refPrice, $broker, $chartTz, $market);
-            $aiModelUsed = 'deterministic-smc-ict';
+            $report = self::generateHeuristicAnalysis($symbol, $timeframe, $refPrice, $broker, $chartTz, $market, $strategyMode);
+            $aiModelUsed = 'deterministic-' . strtolower($strategyMode);
         }
 
         // Compute Visual Chart Overlay
         $imgSize = @getimagesize($imagePath) ?: [1200, 800];
-        $overlay = self::generateVisualOverlay($report, (int)$imgSize[0], (int)$imgSize[1], $refPrice);
+        $overlay = self::generateVisualOverlay($report, (int)$imgSize[0], (int)$imgSize[1], $refPrice, $strategyMode);
 
         // Persist to database
         $analysisId = Database::insert('chart_vision_analyses', [
@@ -212,12 +218,13 @@ final class ChartVisionService
         string $timeframe,
         float $refPrice,
         ?string $broker,
-        ?string $chartTz
+        ?string $chartTz,
+        string $strategyMode = 'ALL'
     ): ?array {
         $model = (string)Env::get('GEMINI_MODEL', 'gemini-1.5-flash');
         $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
 
-        $systemInstruction = self::buildSystemPrompt($symbol, $timeframe, $refPrice, $broker, $chartTz);
+        $systemInstruction = self::buildSystemPrompt($symbol, $timeframe, $refPrice, $broker, $chartTz, $strategyMode);
 
         $payload = [
             'contents' => [
@@ -263,11 +270,12 @@ final class ChartVisionService
         string $timeframe,
         float $refPrice,
         ?string $broker,
-        ?string $chartTz
+        ?string $chartTz,
+        string $strategyMode = 'ALL'
     ): ?array {
         $baseUrl = rtrim((string)Env::get('AI_BASE_URL', 'https://api.openai.com/v1'), '/');
         $model = (string)Env::get('AI_MODEL', 'gpt-4o-mini');
-        $systemInstruction = self::buildSystemPrompt($symbol, $timeframe, $refPrice, $broker, $chartTz);
+        $systemInstruction = self::buildSystemPrompt($symbol, $timeframe, $refPrice, $broker, $chartTz, $strategyMode);
 
         $payload = [
             'model'       => $model,
@@ -308,20 +316,33 @@ final class ChartVisionService
     }
 
     /**
-     * Institutional System Prompt enforcing structured 14-point report and price safety.
+     * Institutional System Prompt enforcing structured 14-point report, price safety, and strategy mode (ICT, SMC, CRT, ALL).
      */
-    private static function buildSystemPrompt(string $symbol, string $timeframe, float $refPrice, ?string $broker, ?string $chartTz): string
-    {
+    private static function buildSystemPrompt(
+        string $symbol,
+        string $timeframe,
+        float $refPrice,
+        ?string $broker,
+        ?string $chartTz,
+        string $strategyMode = 'ALL'
+    ): string {
+        $strategyDirective = match ($strategyMode) {
+            'CRT' => "STRATEGY DIRECTIVE: CANDLE RANGE THEORY (CRT). Focus on previous reference candle boundaries (Range High RH, Range Low RL, and 50% Equilibrium EQ). Detect if price has swept a boundary and reclaimed inside the range (targeting 50% EQ & opposing boundary), or if a directional range expansion breakout is underway.",
+            'ICT' => "STRATEGY DIRECTIVE: INNER CIRCLE TRADER (ICT). Prioritize ICT Killzones, Silver Bullet, Fair Value Gaps (FVG), 2022 Mentorship Model (MSS + displacement into FVG), and Breaker Blocks.",
+            'SMC' => "STRATEGY DIRECTIVE: SMART MONEY CONCEPTS (SMC). Prioritize Break of Structure (BOS), Change of Character (CHoCH), Order Blocks (OB), and resting liquidity pools (BSL/SSL).",
+            default => "STRATEGY DIRECTIVE: MULTI-CONFLUENCE. Synthesize ICT, SMC, and CRT (Candle Range Theory) into the highest-conviction setup."
+        };
+
         return <<<PROMPT
-You are a top-tier institutional ICT (Inner Circle Trader) and SMC (Smart Money Concepts) Market Analyst specializing in {$symbol}.
+You are a top-tier institutional quantitative trading analyst specializing in ICT, SMC, and Candle Range Theory (CRT) for {$symbol}.
 Analyze the provided trading chart image rigorously and return ONLY a valid, minified JSON object matching the required schema.
+
+{$strategyDirective}
 
 CRITICAL RULES:
 1. STRICT PRICING INTEGRITY: Never invent arbitrary prices. If the chart's price axis is blurry or ambiguous, anchor levels reasonably around the provided reference price {$refPrice}.
-2. Separate OBSERVED CHART FACTS (what is physically visible) from AI INTERPRETATIONS (probabilistic SMC/ICT deductions).
+2. Separate OBSERVED CHART FACTS (what is physically visible) from AI INTERPRETATIONS (probabilistic deductions).
 3. If setup conditions are incomplete, low quality, or high-risk, explicitly select "NO TRADE" or "WAITING" and explain why in reasons_to_avoid.
-
-{$ragPrompt}
 
 SCHEMA REQUIREMENTS (JSON format):
 {
@@ -337,13 +358,13 @@ SCHEMA REQUIREMENTS (JSON format):
     "fvgs": [{"type": "Bullish FVG", "top": 0.0, "bottom": 0.0, "status": "fresh"}],
     "order_blocks": [{"type": "Bearish OB", "top": 0.0, "bottom": 0.0, "status": "unmitigated"}]
   },
-  "detected_strategy": "ICT 2022 Mentorship Model" | "ICT Silver Bullet" | "ICT Unicorn Model" | "ICT OTE" | "ICT Turtle Soup" | "SMC Breaker Retest",
+  "detected_strategy": "CRT Range Sweep & Reclaim" | "CRT Range Expansion" | "ICT 2022 Mentorship Model" | "ICT Silver Bullet" | "ICT Unicorn Model" | "SMC Breaker Retest",
   "trade_direction": "BUY" | "SELL" | "NO TRADE" | "WAITING",
   "entry_zone": {"min": 0.0, "max": 0.0, "ref_entry": 0.0},
   "stop_loss": {"price": 0.0, "reason": "Structural invalidation beyond liquidity sweep"},
   "take_profit": {
-    "tp1": {"price": 0.0, "rr": 2.0, "target": "Opposing BSL"},
-    "tp2": {"price": 0.0, "rr": 3.5, "target": "Major Liquidity Pool"},
+    "tp1": {"price": 0.0, "rr": 2.0, "target": "Opposing BSL or CRT 50% EQ"},
+    "tp2": {"price": 0.0, "rr": 3.5, "target": "Major Liquidity Pool or CRT Boundary"},
     "tp3": {"price": 0.0, "rr": 5.0, "target": "HTF Dealing Range EQ/High"}
   },
   "risk_reward": {"tp1": 2.0, "tp2": 3.5, "tp3": 5.0},
@@ -429,7 +450,8 @@ PROMPT;
         float $refPrice,
         ?string $broker,
         ?string $chartTz,
-        MarketDataService $market
+        MarketDataService $market,
+        string $strategyMode = 'ALL'
     ): array {
         $c = $market->candles($timeframe, 150);
         $smcEngine = new SmcEngine();
@@ -440,51 +462,88 @@ PROMPT;
         $ictEngine = new IctEngine();
         $ictRes = $ictEngine->analyze($c, $smcRes, time());
 
+        $crtEngine = new CrtEngine();
+        $crtRes = $crtEngine->analyze($c);
+
         $trend = $smcRes['trend'] ?? 0;
         $isBull = ($trend === 1);
         $isBear = ($trend === -1);
         $bias = $isBull ? 'Bullish' : ($isBear ? 'Bearish' : 'Neutral');
 
-        // Check if ICT strategy was detected
+        // Strategy-Specific Determination
         $primaryStrat = 'ICT 2022 Mentorship Model';
-        if (!empty($ictRes['detected_strategies'])) {
-            $primaryStrat = $ictRes['detected_strategies'][0]['name'];
-        }
-
-        $lastEvt = $smcRes['last_event'] ?? null;
-        $structLabel = $lastEvt
-            ? ($lastEvt['mss'] ? 'Market Structure Shift (MSS)' : ($lastEvt['type'] . ' Confirmed'))
-            : 'Consolidation / Dealing Range';
-
-        // Entry zone determination
         $entryZone = null;
-        $obList = $smcRes['order_blocks'] ?? [];
-        $fvgList = $smcRes['fvgs'] ?? [];
+        $sl = null;
+        $tp1 = null;
+        $tp2 = null;
+        $tp3 = null;
+        $tradeDirection = 'WAITING';
+        $crtData = $crtRes['reference_candle'] ?? null;
 
-        // Check Unicorn first
-        if (!empty($ictRes['unicorns'])) {
-            $u = $ictRes['unicorns'][0];
-            $entryZone = ['min' => $u['bottom'], 'max' => $u['top'], 'ref_entry' => $u['mid']];
-            $primaryStrat = 'ICT Unicorn Model (Breaker + FVG)';
-        } elseif (!empty($fvgList)) {
-            $lastFvg = end($fvgList);
-            $entryZone = ['min' => $lastFvg['bottom'], 'max' => $lastFvg['top'], 'ref_entry' => round(($lastFvg['top'] + $lastFvg['bottom']) / 2, 2)];
-        } elseif (!empty($obList)) {
-            $lastOb = end($obList);
-            $entryZone = ['min' => $lastOb['bottom'], 'max' => $lastOb['top'], 'ref_entry' => round(($lastOb['top'] + $lastOb['bottom']) / 2, 2)];
+        if ($strategyMode === 'CRT') {
+            if (!empty($crtRes['trade_setup'])) {
+                $cs = $crtRes['trade_setup'];
+                $primaryStrat = $cs['name'];
+                $bias = $cs['bias'];
+                $isBull = ($cs['direction'] === 'BUY');
+                $isBear = ($cs['direction'] === 'SELL');
+                $structLabel = 'CRT ' . ucfirst(str_replace('_', ' ', $crtRes['phase']));
+                $entryZone = $cs['entry_zone'];
+                $entry = $cs['entry'];
+                $sl = $cs['stop_loss'];
+                $tp1 = $cs['tp1'];
+                $tp2 = $cs['tp2'];
+                $tp3 = round($isBull ? $tp2 + abs($tp2 - $tp1) : $tp2 - abs($tp1 - $tp2), 2);
+                $tradeDirection = $cs['direction'];
+            } else {
+                $primaryStrat = 'CRT Inside Range Contraction';
+                $bias = $crtRes['bias'];
+                $structLabel = 'CRT ' . ucfirst(str_replace('_', ' ', $crtRes['phase']));
+                $tradeDirection = 'WAITING';
+            }
+        } elseif ($strategyMode === 'SMC') {
+            $primaryStrat = 'SMC Order Block Retest';
+            $structLabel = $smcRes['last_event'] ? $smcRes['last_event']['type'] . ' Confirmed' : 'Consolidation Range';
         } else {
-            $entryZone = ['min' => round($refPrice - 0.25 * $atr, 2), 'max' => round($refPrice + 0.25 * $atr, 2), 'ref_entry' => $refPrice];
+            // ICT or ALL
+            if (!empty($ictRes['detected_strategies'])) {
+                $primaryStrat = $ictRes['detected_strategies'][0]['name'];
+            }
+            $lastEvt = $smcRes['last_event'] ?? null;
+            $structLabel = $lastEvt
+                ? ($lastEvt['mss'] ? 'Market Structure Shift (MSS)' : ($lastEvt['type'] . ' Confirmed'))
+                : 'Consolidation / Dealing Range';
         }
 
-        // Levels
-        $entry = $entryZone['ref_entry'];
-        $slDist = max(1.5, 1.2 * $atr);
-        $sl = $isBull ? round($entry - $slDist, 2) : round($entry + $slDist, 2);
-        $risk = abs($entry - $sl);
+        // Fallback Entry Zone determination if not already set by CRT
+        if ($entryZone === null) {
+            $obList = $smcRes['order_blocks'] ?? [];
+            $fvgList = $smcRes['fvgs'] ?? [];
 
-        $tp1 = $isBull ? round($entry + 2.0 * $risk, 2) : round($entry - 2.0 * $risk, 2);
-        $tp2 = $isBull ? round($entry + 3.5 * $risk, 2) : round($entry - 3.5 * $risk, 2);
-        $tp3 = $isBull ? round($entry + 5.0 * $risk, 2) : round($entry - 5.0 * $risk, 2);
+            if (!empty($ictRes['unicorns']) && ($strategyMode === 'ICT' || $strategyMode === 'ALL')) {
+                $u = $ictRes['unicorns'][0];
+                $entryZone = ['min' => $u['bottom'], 'max' => $u['top'], 'ref_entry' => $u['mid']];
+                $primaryStrat = 'ICT Unicorn Model (Breaker + FVG)';
+            } elseif (!empty($fvgList) && ($strategyMode === 'ICT' || $strategyMode === 'ALL')) {
+                $lastFvg = end($fvgList);
+                $entryZone = ['min' => $lastFvg['bottom'], 'max' => $lastFvg['top'], 'ref_entry' => round(($lastFvg['top'] + $lastFvg['bottom']) / 2, 2)];
+            } elseif (!empty($obList)) {
+                $lastOb = end($obList);
+                $entryZone = ['min' => $lastOb['bottom'], 'max' => $lastOb['top'], 'ref_entry' => round(($lastOb['top'] + $lastOb['bottom']) / 2, 2)];
+            } else {
+                $entryZone = ['min' => round($refPrice - 0.25 * $atr, 2), 'max' => round($refPrice + 0.25 * $atr, 2), 'ref_entry' => $refPrice];
+            }
+
+            $entry = $entryZone['ref_entry'];
+            $slDist = max(1.5, 1.2 * $atr);
+            $sl = $isBull ? round($entry - $slDist, 2) : round($entry + $slDist, 2);
+            $risk = abs($entry - $sl);
+
+            $tp1 = $isBull ? round($entry + 2.0 * $risk, 2) : round($entry - 2.0 * $risk, 2);
+            $tp2 = $isBull ? round($entry + 3.5 * $risk, 2) : round($entry - 3.5 * $risk, 2);
+            $tp3 = $isBull ? round($entry + 5.0 * $risk, 2) : round($entry - 5.0 * $risk, 2);
+            $tradeDirection = $bias === 'Neutral' ? 'WAITING' : ($isBull ? 'BUY' : 'SELL');
+        }
 
         $bsl = [];
         foreach (array_slice($smcRes['liquidity']['bsl'] ?? [], -3) as $l) {
@@ -499,22 +558,24 @@ PROMPT;
             'market_bias'         => $bias,
             'htf_direction'       => $bias,
             'market_structure'    => $structLabel,
+            'strategy_mode'       => $strategyMode,
+            'crt_data'            => $crtData,
             'structure_details'   => sprintf(
-                'Chart demonstrates %s flow on %s. Recent %s confirmed around $%.2f with ATR volatility of $%.2f.',
-                strtolower($bias), $timeframe, $structLabel, (float)($lastEvt['level'] ?? $refPrice), $atr
+                'Chart demonstrates %s flow under %s strategy mode. Recent %s confirmed around $%.2f with ATR volatility of $%.2f.',
+                strtolower($bias), $strategyMode, $structLabel, (float)($lastEvt['level'] ?? $refPrice), $atr
             ),
             'liquidity_targets'   => ['bsl' => $bsl ?: [['level' => round($refPrice + 2 * $atr, 2), 'label' => 'BSL Resting High']], 'ssl' => $ssl ?: [['level' => round($refPrice - 2 * $atr, 2), 'label' => 'SSL Resting Low']]],
             'fvg_ob_zones'        => [
-                'fvgs'        => array_slice($fvgList, -2),
-                'order_blocks'=> array_slice($obList, -2),
+                'fvgs'        => array_slice($smcRes['fvgs'] ?? [], -2),
+                'order_blocks'=> array_slice($smcRes['order_blocks'] ?? [], -2),
             ],
             'detected_strategy'   => $primaryStrat,
-            'trade_direction'     => $bias === 'Neutral' ? 'WAITING' : ($isBull ? 'BUY' : 'SELL'),
+            'trade_direction'     => $tradeDirection,
             'entry_zone'          => $entryZone,
             'stop_loss'           => ['price' => $sl, 'reason' => 'Structural invalidation beyond opposing impulse leg extreme'],
             'take_profit'         => [
-                'tp1' => ['price' => $tp1, 'rr' => 2.0, 'target' => 'Opposing Intraday Liquidity Pool'],
-                'tp2' => ['price' => $tp2, 'rr' => 3.5, 'target' => 'Dealing Range EQ / Structural Target'],
+                'tp1' => ['price' => $tp1, 'rr' => 2.0, 'target' => 'Opposing Intraday Liquidity / CRT 50% EQ'],
+                'tp2' => ['price' => $tp2, 'rr' => 3.5, 'target' => 'Dealing Range EQ / CRT Range Boundary'],
                 'tp3' => ['price' => $tp3, 'rr' => 5.0, 'target' => 'Major External Session High/Low'],
             ],
             'risk_reward'         => ['tp1' => 2.0, 'tp2' => 3.5, 'tp3' => 5.0],
@@ -524,7 +585,7 @@ PROMPT;
                 'Price pierces TP1 prior to entering the defined entry zone',
             ],
             'supporting_evidence' => [
-                sprintf('%s market structure confirmed on %s', $bias, $timeframe),
+                sprintf('%s market structure confirmed on %s (%s model)', $bias, $timeframe, $strategyMode),
                 sprintf('Key institutional zone (%s) identified between $%.2f – $%.2f', $primaryStrat, $entryZone['min'], $entryZone['max']),
                 'Positive technical Risk-to-Reward ratio exceeding 2.0R',
                 !empty($ictRes['killzone']['active']) ? "Active killzone: {$ictRes['killzone']['active']}" : 'Standard trading hours alignment',
@@ -535,7 +596,7 @@ PROMPT;
             ],
             'observed_facts'      => [
                 sprintf('Observed candlestick action around reference price $%.2f', $refPrice),
-                sprintf('Timeframe: %s | Broker / Data Feed: %s', $timeframe, $broker ?: 'Institutional ECN'),
+                sprintf('Timeframe: %s | Strategy Mode: %s | Broker / Data Feed: %s', $timeframe, $strategyMode, $broker ?: 'Institutional ECN'),
             ],
             'uncertainties_warnings' => [
                 'Visual chart interpretation is probabilistic decision-support; verify exact broker spread before execution.',
@@ -547,7 +608,7 @@ PROMPT;
     /**
      * Generate visual SVG/Canvas bounding coordinates mapped over the chart image.
      */
-    public static function generateVisualOverlay(array $report, int $width, int $height, float $refPrice): array
+    public static function generateVisualOverlay(array $report, int $width, int $height, float $refPrice, string $strategyMode = 'ALL'): array
     {
         $dir = $report['trade_direction'] ?? 'BUY';
         $entryZone = $report['entry_zone'] ?? ['min' => $refPrice - 2, 'max' => $refPrice + 2, 'ref_entry' => $refPrice];
@@ -557,6 +618,11 @@ PROMPT;
 
         // Estimate price range window to map Y coordinates (top = max price, bottom = min price)
         $prices = [$entryZone['min'], $entryZone['max'], $sl, $tp1, $tp2, $refPrice];
+        if (!empty($report['crt_data']['range_high'])) {
+            $prices[] = (float)$report['crt_data']['range_high'];
+            $prices[] = (float)$report['crt_data']['range_low'];
+        }
+
         $maxP = max($prices) * 1.002;
         $minP = min($prices) * 0.998;
         $pRange = max(0.01, $maxP - $minP);
@@ -572,45 +638,81 @@ PROMPT;
         $yTp1 = $priceToY($tp1);
         $yTp2 = $priceToY($tp2);
 
+        $elements = [
+            [
+                'type'     => 'zone',
+                'label'    => 'ENTRY ZONE (' . $report['detected_strategy'] . ')',
+                'y1'       => min($yEntryTop, $yEntryBot),
+                'y2'       => max($yEntryTop, $yEntryBot),
+                'color'    => 'rgba(0, 229, 255, 0.22)',
+                'stroke'   => '#00e5ff',
+                'price_low'=> $entryZone['min'],
+                'price_high'=> $entryZone['max'],
+            ],
+            [
+                'type'     => 'line',
+                'label'    => "STOP LOSS ($sl)",
+                'y'        => $ySl,
+                'color'    => '#ff3366',
+                'price'    => $sl,
+                'dash'     => [4, 4],
+            ],
+            [
+                'type'     => 'line',
+                'label'    => "TAKE PROFIT 1 ($tp1)",
+                'y'        => $yTp1,
+                'color'    => '#00ff88',
+                'price'    => $tp1,
+                'dash'     => [6, 4],
+            ],
+            [
+                'type'     => 'line',
+                'label'    => "TAKE PROFIT 2 ($tp2)",
+                'y'        => $yTp2,
+                'color'    => '#00cc66',
+                'price'    => $tp2,
+                'dash'     => [6, 4],
+            ],
+        ];
+
+        // Add CRT Reference Lines when present
+        if (!empty($report['crt_data'])) {
+            $crt = $report['crt_data'];
+            $rh = (float)($crt['range_high'] ?? 0);
+            $rl = (float)($crt['range_low'] ?? 0);
+            $eq = (float)($crt['range_eq'] ?? 0);
+            if ($rh > 0 && $rl > 0) {
+                $elements[] = [
+                    'type'  => 'line',
+                    'label' => "CRT RANGE HIGH ($rh)",
+                    'y'     => $priceToY($rh),
+                    'color' => '#38bdf8',
+                    'price' => $rh,
+                    'dash'  => [8, 4],
+                ];
+                $elements[] = [
+                    'type'  => 'line',
+                    'label' => "CRT 50% EQ ($eq)",
+                    'y'     => $priceToY($eq),
+                    'color' => '#eab308',
+                    'price' => $eq,
+                    'dash'  => [4, 4],
+                ];
+                $elements[] = [
+                    'type'  => 'line',
+                    'label' => "CRT RANGE LOW ($rl)",
+                    'y'     => $priceToY($rl),
+                    'color' => '#38bdf8',
+                    'price' => $rl,
+                    'dash'  => [8, 4],
+                ];
+            }
+        }
+
         return [
             'width'       => $width,
             'height'      => $height,
-            'elements'    => [
-                [
-                    'type'     => 'zone',
-                    'label'    => 'ENTRY ZONE (' . $report['detected_strategy'] . ')',
-                    'y1'       => min($yEntryTop, $yEntryBot),
-                    'y2'       => max($yEntryTop, $yEntryBot),
-                    'color'    => 'rgba(0, 229, 255, 0.22)',
-                    'stroke'   => '#00e5ff',
-                    'price_low'=> $entryZone['min'],
-                    'price_high'=> $entryZone['max'],
-                ],
-                [
-                    'type'     => 'line',
-                    'label'    => "STOP LOSS ($sl)",
-                    'y'        => $ySl,
-                    'color'    => '#ff3366',
-                    'price'    => $sl,
-                    'dash'     => [4, 4],
-                ],
-                [
-                    'type'     => 'line',
-                    'label'    => "TAKE PROFIT 1 ($tp1)",
-                    'y'        => $yTp1,
-                    'color'    => '#00ff88',
-                    'price'    => $tp1,
-                    'dash'     => [6, 4],
-                ],
-                [
-                    'type'     => 'line',
-                    'label'    => "TAKE PROFIT 2 ($tp2)",
-                    'y'        => $yTp2,
-                    'color'    => '#00cc66',
-                    'price'    => $tp2,
-                    'dash'     => [6, 4],
-                ],
-            ],
+            'elements'    => $elements,
         ];
     }
 

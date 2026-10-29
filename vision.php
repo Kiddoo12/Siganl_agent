@@ -65,6 +65,33 @@ $csrf = Csrf::token();
             <input type="hidden" name="_csrf" value="<?= Validator::e($csrf) ?>">
             <input type="hidden" id="base64Payload" name="image_base64" value="">
 
+            <!-- Strategy Selector (ICT, SMC, CRT, ALL) -->
+            <div style="margin-bottom: 14px;">
+                <label class="form-label" style="display:flex;justify-content:space-between;align-items:center;">
+                    <span>Trading Strategy Priority</span>
+                    <span class="badge" style="background: rgba(245, 158, 11, 0.15); color: var(--gold-bright); font-size: 10px;">Select Strategy</span>
+                </label>
+                <div class="strategy-selector-chips" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 4px;">
+                    <button type="button" class="strat-chip-btn active" data-strat="ALL" onclick="selectVisionStrategy('ALL')">
+                        <span style="display:block;font-size:12.5px;font-weight:750;">🌐 ALL</span>
+                        <span style="font-size:9.5px;opacity:0.75;">Confluence</span>
+                    </button>
+                    <button type="button" class="strat-chip-btn" data-strat="ICT" onclick="selectVisionStrategy('ICT')">
+                        <span style="display:block;font-size:12.5px;font-weight:750;">⚡ ICT</span>
+                        <span style="font-size:9.5px;opacity:0.75;">Killzone/FVG</span>
+                    </button>
+                    <button type="button" class="strat-chip-btn" data-strat="SMC" onclick="selectVisionStrategy('SMC')">
+                        <span style="display:block;font-size:12.5px;font-weight:750;">🏛️ SMC</span>
+                        <span style="font-size:9.5px;opacity:0.75;">BOS / OB</span>
+                    </button>
+                    <button type="button" class="strat-chip-btn" data-strat="CRT" onclick="selectVisionStrategy('CRT')">
+                        <span style="display:block;font-size:12.5px;font-weight:750;">🕯️ CRT</span>
+                        <span style="font-size:9.5px;opacity:0.75;">Range Reclaim</span>
+                    </button>
+                </div>
+                <input type="hidden" id="strategyModeInput" name="strategy_mode" value="ALL">
+            </div>
+
             <div class="vision-form-row">
                 <div>
                     <label class="form-label" for="symbolSelect">Symbol / Asset</label>
@@ -160,6 +187,7 @@ $csrf = Csrf::token();
                 <div class="vision-badge-row" style="margin: 0; flex: 1;">
                     <span class="badge-bias" id="resBiasBadge">BULLISH</span>
                     <span class="badge-strat" id="resStrategyBadge">ICT 2022 Mentorship Model</span>
+                    <span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid #38bdf8;" id="resStratModeBadge">Mode: ALL</span>
                     <span class="badge" style="background: var(--bg-elevated); border: 1px solid var(--border);" id="resDirectionBadge">BUY</span>
                     <span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid #10b981;" id="resScoreBadge">Confidence: 85/100</span>
                     <span class="badge" id="resModelBadge">Model: gemini-1.5-flash</span>
@@ -266,7 +294,36 @@ $csrf = Csrf::token();
     </div>
 </div>
 
+<style>
+.strat-chip-btn {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    padding: 8px 4px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    text-align: center;
+    transition: all 0.2s ease;
+}
+.strat-chip-btn:hover {
+    border-color: var(--border-hover);
+}
+.strat-chip-btn.active {
+    background: rgba(245, 158, 11, 0.18);
+    border-color: var(--gold);
+    color: var(--gold-bright);
+}
+</style>
+
 <script>
+window.selectVisionStrategy = function(strat) {
+    const input = document.getElementById('strategyModeInput');
+    if (input) input.value = strat;
+    document.querySelectorAll('.strat-chip-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.strat === strat);
+    });
+};
+
 document.addEventListener('DOMContentLoaded', () => {
     let currentImageFile = null;
     let currentBase64 = null;
@@ -438,6 +495,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         document.getElementById('resScoreBadge').textContent = `Confidence: ${report.confidence_score}/100`;
         document.getElementById('resModelBadge').textContent = `Model: ${data.ai_model}`;
+        if (document.getElementById('resStratModeBadge')) {
+            document.getElementById('resStratModeBadge').textContent = `Mode: ${report.strategy_mode || document.getElementById('strategyModeInput').value || 'ALL'}`;
+        }
 
         // Level Cards
         const ez = report.entry_zone || {};

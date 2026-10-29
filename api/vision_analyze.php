@@ -36,6 +36,7 @@ if (!Csrf::validate($csrfHeader)) {
 
 $symbol = Validator::str($input['symbol'] ?? 'XAUUSD', 1, 16);
 $timeframe = Validator::str($input['timeframe'] ?? 'M15', 1, 8);
+$strategyMode = Validator::str($input['strategy_mode'] ?? 'ALL', 1, 16);
 $manualPrice = isset($input['manual_price']) && is_numeric($input['manual_price']) ? (float)$input['manual_price'] : null;
 $broker = Validator::str($input['broker'] ?? '', 0, 64);
 $chartTz = Validator::str($input['chart_tz'] ?? '', 0, 64);
@@ -57,7 +58,8 @@ try {
         $manualPrice,
         $broker ?: null,
         $chartTz ?: null,
-        (int)$user['id']
+        (int)$user['id'],
+        $strategyMode
     );
 
     $analysis['image_url'] = $upload['rel_url'];
