@@ -11,6 +11,7 @@ use App\Market\MarketDataService;
 use App\SMC\CrtEngine;
 use App\SMC\IctEngine;
 use App\SMC\SmcEngine;
+use App\SMC\SnrEngine;
 
 /**
  * Interactive AI Chat Analyst Service.
@@ -18,11 +19,12 @@ use App\SMC\SmcEngine;
  *  - ICT (Inner Circle Trader)
  *  - SMC (Smart Money Concepts)
  *  - CRT (Candle Range Theory)
+ *  - SNR (Support and Resistance)
  *  - ALL (Multi-Confluence)
  */
 final class AiChatService
 {
-    public const VALID_STRATEGIES = ['ICT', 'SMC', 'CRT', 'ALL'];
+    public const VALID_STRATEGIES = ['ICT', 'SMC', 'CRT', 'SNR', 'ALL'];
 
     /**
      * Send a message to the AI Analyst, process market data according to the selected strategy,
@@ -73,8 +75,11 @@ final class AiChatService
         $crtEngine = new CrtEngine();
         $crtRes = $crtEngine->analyze($candles);
 
+        $snrEngine = new SnrEngine();
+        $snrRes = $snrEngine->analyze($candles);
+
         // 4. Generate Strategy-Specific Analysis & Reply
-        $replyPayload = self::buildResponse($message, $strategyMode, $symbol, $timeframe, $currPrice, $smcRes, $ictRes, $crtRes);
+        $replyPayload = self::buildResponse($message, $strategyMode, $symbol, $timeframe, $currPrice, $smcRes, $ictRes, $crtRes, $snrRes);
 
         // 5. Check if external LLM should refine conversational wording
         $finalReply = self::callExternalAiIfAvailable($message, $replyPayload, $strategyMode, $symbol, $timeframe);
@@ -118,7 +123,8 @@ final class AiChatService
         float $price,
         array $smcRes,
         array $ictRes,
-        array $crtRes
+        array $crtRes,
+        array $snrRes = []
     ): array {
         $now = time();
         $kz = IctEngine::killzones($now);
@@ -312,17 +318,98 @@ final class AiChatService
             }
         }
         // -------------------------------------------------------------
-        // STRATEGY: ALL / FULL CONFLUENCE (ICT + SMC + CRT)
+        // STRATEGY: SUPPORT AND RESISTANCE (SNR)
+        // -------------------------------------------------------------
+        elseif ($strategyMode === 'SNR') {
+            $nr = $snrRes['nearest_resistance'] ?? null;
+            $ns = $snrRes['nearest_support'] ?? null;
+            $allR = $snrRes['all_resistances'] ?? [];
+            $allS = $snrRes['all_supports'] ?? [];
+            $snrSetup = $snrRes['trade_setup'];
+            $state = $snrRes['market_state'] ?? 'range_consolidation';
+            $bias = $snrRes['bias'] ?? 'Neutral';
+            $rej = $snrRes['rejection_candle'] ?? [];
+
+            $rListStr = !empty($allR) 
+                ? implode(', ', array_map(static fn($r) => sprintf('$%.2f (%d touches, %s)', $r['price'], $r['touches'], $r['strength']), array_slice($allR, 0, 3)))
+                : 'None detected';
+            $sListStr = !empty($allS) 
+                ? implode(', ', array_map(static fn($s) => sprintf('$%.2f (%d touches, %s)', $s['price'], $s['touches'], $s['strength']), array_slice($allS, 0, 3)))
+                : 'None detected';
+
+            if ($snrSetup) {
+                $signal = $snrSetup['direction'];
+                $setupType = $snrSetup['name'];
+                $entry = $snrSetup['entry'];
+                $sl = $snrSetup['stop_loss'];
+                $tp1 = $snrSetup['tp1'];
+                $tp2 = $snrSetup['tp2'];
+                $rr = $snrSetup['rr2'];
+                $confidence = 'High (' . ($snrSetup['confidence_score'] ?? 84) . '%)';
+                $invalidation = implode(' | ', $snrSetup['invalidations'] ?? []);
+            } else {
+                $signal = 'NO TRADE';
+                $setupType = 'S&R Range Consolidation';
+                $confidence = 'Medium';
+                $invalidation = sprintf('Await price to test Support ($%.2f) or Resistance ($%.2f)', $ns ? $ns['price'] : 0, $nr ? $nr['price'] : 0);
+            }
+
+            $sections[] = sprintf(
+                "### 🧱 Support & Resistance (S&R) Analysis — %s (%s)\n" .
+                "* **Major Resistance Levels:** %s\n" .
+                "* **Major Support Levels:** %s\n" .
+                "* **Nearest Resistance (R1):** %s (Dist: +$%.2f)\n" .
+                "* **Nearest Support (S1):** %s (Dist: -$%.2f)\n" .
+                "* **Market State:** `%s`\n" .
+                "* **Rejection Wick:** Upper %.1f%% | Lower %.1f%%",
+                $symbol, $timeframe, $rListStr, $sListStr,
+                $nr ? sprintf('$%.2f (%d touches, %s)', $nr['price'], $nr['touches'], $nr['strength']) : 'N/A',
+                $nr ? (float)($nr['distance'] ?? 0) : 0,
+                $ns ? sprintf('$%.2f (%d touches, %s)', $ns['price'], $ns['touches'], $ns['strength']) : 'N/A',
+                $ns ? (float)($ns['distance'] ?? 0) : 0,
+                strtoupper(str_replace('_', ' ', $state)),
+                $rej['upper_wick_ratio'] ?? 0, $rej['lower_wick_ratio'] ?? 0
+            );
+
+            if ($snrSetup) {
+                $sections[] = sprintf(
+                    "#### 🎯 S&R Execution Setup (%s):\n" .
+                    "* **Action:** `%s`\n" .
+                    "* **Model:** %s\n" .
+                    "* **Entry Price / Zone:** $%.2f ($%.2f – $%.2f)\n" .
+                    "* **Stop Loss:** $%.2f (Structural invalidation)\n" .
+                    "* **Take Profit 1:** $%.2f (Target S/R level, RR 1:%.2f)\n" .
+                    "* **Take Profit 2:** $%.2f (Extended S/R level, RR 1:%.2f)\n" .
+                    "* **Technical Evidence:** %s",
+                    $snrSetup['name'], $signal, $snrSetup['code'],
+                    $entry, $snrSetup['entry_zone']['min'], $snrSetup['entry_zone']['max'],
+                    $sl, $tp1, $snrSetup['rr1'], $tp2, $snrSetup['rr2'], $snrSetup['details']
+                );
+            } else {
+                $sections[] = sprintf(
+                    "#### ⏳ S&R Stand Aside Guidance:\n" .
+                    "Price ($%.2f) is currently oscillating between Support ($%.2f) and Resistance ($%.2f). Under institutional S&R rules, **no entry is authorized** in the middle of a range. Wait for one of the following:\n" .
+                    "1. **Confirmed Breakout & Retest:** Candle body close beyond $%.2f or $%.2f, followed by a pullback retest holding as role reversal.\n" .
+                    "2. **False Breakout / Trap:** Wick penetration beyond key levels with immediate rejection candle closing back inside the range.",
+                    $price, ($ns ? (float)$ns['price'] : 0), ($nr ? (float)$nr['price'] : 0),
+                    ($nr ? (float)$nr['price'] : 0), ($ns ? (float)$ns['price'] : 0)
+                );
+            }
+        }
+        // -------------------------------------------------------------
+        // STRATEGY: ALL / FULL CONFLUENCE (ICT + SMC + CRT + SNR)
         // -------------------------------------------------------------
         else {
             $crtSetup = $crtRes['trade_setup'];
+            $snrSetup = $snrRes['trade_setup'] ?? null;
             $unicorns = $ictRes['unicorns'] ?? [];
             $obs = $smcRes['order_blocks'] ?? [];
 
             $sections[] = sprintf(
-                "### 🌐 Multi-Confluence Intelligence (ICT + SMC + CRT) — %s (%s)\n" .
+                "### 🌐 Multi-Confluence Intelligence (ICT + SMC + CRT + SNR) — %s (%s)\n" .
                 "* **Live Spot Price:** $%.2f\n" .
                 "* **CRT Phase:** `%s` (RH: $%.2f | RL: $%.2f | EQ: $%.2f)\n" .
+                "* **S&R Key Levels:** R1 $%.2f | S1 $%.2f\n" .
                 "* **ICT Session:** %s (Killzone: %s)\n" .
                 "* **SMC Structure:** %s (Trend: %s)",
                 $symbol, $timeframe, $price,
@@ -330,12 +417,23 @@ final class AiChatService
                 (float)($crtRes['reference_candle']['range_high'] ?? 0),
                 (float)($crtRes['reference_candle']['range_low'] ?? 0),
                 (float)($crtRes['reference_candle']['range_eq'] ?? 0),
+                (float)($snrRes['nearest_resistance']['price'] ?? 0),
+                (float)($snrRes['nearest_support']['price'] ?? 0),
                 $kz['ny_time'], ($kz['is_killzone'] ? 'ACTIVE' : 'OFF'),
                 ($smcRes['last_event']['type'] ?? 'Ranging'),
                 ($smcRes['trend'] === 1 ? 'Bullish' : ($smcRes['trend'] === -1 ? 'Bearish' : 'Neutral'))
             );
 
-            if ($crtSetup && !empty($unicorns)) {
+            if ($crtSetup && $snrSetup && $crtSetup['direction'] === $snrSetup['direction']) {
+                $signal = $crtSetup['direction'];
+                $setupType = 'Quad Confluence: CRT ' . $crtSetup['name'] . ' + S&R ' . $snrSetup['name'];
+                $entry = $crtSetup['entry'];
+                $sl = $crtSetup['stop_loss'];
+                $tp1 = $crtSetup['tp1'];
+                $tp2 = $crtSetup['tp2'];
+                $rr = 2.9;
+                $confidence = 'Exceptional (94%)';
+            } elseif ($crtSetup && !empty($unicorns)) {
                 $signal = $crtSetup['direction'];
                 $setupType = 'Triple Confluence: CRT Sweep + ICT Unicorn + SMC Breaker';
                 $entry = $crtSetup['entry'];
@@ -344,6 +442,15 @@ final class AiChatService
                 $tp2 = $crtSetup['tp2'];
                 $rr = 2.8;
                 $confidence = 'Very High (92%)';
+            } elseif ($snrSetup) {
+                $signal = $snrSetup['direction'];
+                $setupType = 'S&R ' . $snrSetup['name'] . ' + Structure Confluence';
+                $entry = $snrSetup['entry'];
+                $sl = $snrSetup['stop_loss'];
+                $tp1 = $snrSetup['tp1'];
+                $tp2 = $snrSetup['tp2'];
+                $rr = $snrSetup['rr2'];
+                $confidence = 'High (86%)';
             } elseif ($crtSetup) {
                 $signal = $crtSetup['direction'];
                 $setupType = 'CRT ' . $crtSetup['name'] . ' + SMC Confluence';
@@ -355,7 +462,7 @@ final class AiChatService
                 $confidence = 'High (85%)';
             } else {
                 $signal = 'NO TRADE';
-                $setupType = 'Awaiting Triple Confluence Alignment';
+                $setupType = 'Awaiting Multi-Confluence Alignment';
                 $confidence = 'Low';
             }
 

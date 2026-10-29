@@ -472,11 +472,12 @@
                             <span>Trading Strategy Priority</span>
                             <span class="badge" style="background: rgba(245, 158, 11, 0.15); color: var(--gold-bright); font-size: 10px;">Select Strategy</span>
                         </label>
-                        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 4px;">
+                        <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 4px;">
                             <button type="button" class="btn btn-xs btn-primary gh-strat-btn" id="ghStratALL" onclick="selectGhVisionStrategy('ALL')">🌐 ALL</button>
+                            <button type="button" class="btn btn-xs btn-secondary gh-strat-btn" id="ghStratSNR" onclick="selectGhVisionStrategy('SNR')">🧱 SNR</button>
+                            <button type="button" class="btn btn-xs btn-secondary gh-strat-btn" id="ghStratCRT" onclick="selectGhVisionStrategy('CRT')">🕯️ CRT</button>
                             <button type="button" class="btn btn-xs btn-secondary gh-strat-btn" id="ghStratICT" onclick="selectGhVisionStrategy('ICT')">⚡ ICT</button>
                             <button type="button" class="btn btn-xs btn-secondary gh-strat-btn" id="ghStratSMC" onclick="selectGhVisionStrategy('SMC')">🏛️ SMC</button>
-                            <button type="button" class="btn btn-xs btn-secondary gh-strat-btn" id="ghStratCRT" onclick="selectGhVisionStrategy('CRT')">🕯️ CRT</button>
                         </div>
                         <input type="hidden" id="ghVisionStrategy" value="ALL">
                     </div>
@@ -612,6 +613,9 @@ TP3: 4095.00</div>
                             <button type="button" class="btn btn-sm btn-primary gh-chat-strat-btn" data-strat="ALL" onclick="setGhChatStrategy('ALL')" style="justify-content: flex-start; text-align: left;">
                                 🌐 ALL (Confluence)
                             </button>
+                            <button type="button" class="btn btn-sm btn-secondary gh-chat-strat-btn" data-strat="SNR" onclick="setGhChatStrategy('SNR')" style="justify-content: flex-start; text-align: left;">
+                                🧱 SNR (Support &amp; Resistance)
+                            </button>
                             <button type="button" class="btn btn-sm btn-secondary gh-chat-strat-btn" data-strat="CRT" onclick="setGhChatStrategy('CRT')" style="justify-content: flex-start; text-align: left;">
                                 🕯️ CRT (Candle Range)
                             </button>
@@ -625,8 +629,8 @@ TP3: 4095.00</div>
                     </div>
 
                     <div class="card" style="padding: 14px; font-size: 12px; line-height: 1.5; color: var(--text-muted);" id="ghStratInfoBox">
-                        <strong style="color: var(--text-main); display: block; margin-bottom: 4px;" id="ghStratInfoTitle">🌐 Triple Confluence</strong>
-                        <span id="ghStratInfoDesc">Evaluates setups across ICT liquidity sweeps, SMC structural order blocks, and CRT 50% equilibrium ranges.</span>
+                        <strong style="color: var(--text-main); display: block; margin-bottom: 4px;" id="ghStratInfoTitle">🌐 Multi-Confluence</strong>
+                        <span id="ghStratInfoDesc">Evaluates setups across ICT liquidity sweeps, SMC structural order blocks, CRT 50% equilibrium ranges, and major Support &amp; Resistance breakouts/retests.</span>
                     </div>
                 </div>
 
@@ -635,11 +639,13 @@ TP3: 4095.00</div>
                     <div id="ghChatStream" style="flex: 1; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px;">
                         <div style="background: var(--bg-elevated); padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border); font-size: 13px; line-height: 1.5;">
                             <strong style="color: var(--gold-bright);">AI Trading Analyst Initialized:</strong><br>
-                            Select your strategy above (<strong>ICT</strong>, <strong>SMC</strong>, <strong>CRT</strong>, or <strong>ALL</strong>), and ask any question or click a prompt below.
+                            Select your strategy above (<strong>SNR</strong>, <strong>CRT</strong>, <strong>ICT</strong>, <strong>SMC</strong>, or <strong>ALL</strong>), and ask any question or click a prompt below.
                         </div>
                     </div>
 
                     <div style="padding: 8px 14px; border-top: 1px solid var(--border); background: var(--bg-panel); display: flex; gap: 6px; overflow-x: auto; white-space: nowrap;">
+                        <button class="btn btn-xs btn-secondary" onclick="sendGhQuickPrompt('SNR')">🧱 S&amp;R Breakout &amp; Retest</button>
+                        <button class="btn btn-xs btn-secondary" onclick="sendGhQuickPrompt('TRAP')">🧱 S&amp;R Fakeouts &amp; Traps</button>
                         <button class="btn btn-xs btn-secondary" onclick="sendGhQuickPrompt('CRT')">🕯️ Check CRT Setup</button>
                         <button class="btn btn-xs btn-secondary" onclick="sendGhQuickPrompt('ICT')">⚡ Check ICT Silver Bullet</button>
                         <button class="btn btn-xs btn-secondary" onclick="sendGhQuickPrompt('SMC')">🏛️ Check SMC Order Blocks</button>
@@ -1425,6 +1431,150 @@ TP3: 4095.00</div>
         }
 
         
+        // Standalone GitHub Pages Strategy & Chat Handlers
+        let ghCurrentChatStrat = 'ALL';
+        const ghStratDescriptions = {
+            'ALL': { title: '🌐 Multi-Confluence', desc: 'Evaluates setups across ICT liquidity sweeps, SMC structural order blocks, CRT 50% equilibrium ranges, and major Support & Resistance breakouts/retests.' },
+            'SNR': { title: '🧱 Support & Resistance (S&R)', desc: 'Identifies major multi-touch horizontal levels, trades confirmed breakouts and role-reversal retests, and watches for rejection candles and false breakout traps.' },
+            'CRT': { title: '🕯️ Candle Range Theory (CRT)', desc: 'Focuses on the previous reference candle High (RH), Low (RL), and 50% Equilibrium (EQ). Enforces Phase 1 (Sweep), Phase 2 (Close re-entry), and Phase 3 (Delivery).' },
+            'ICT': { title: '⚡ Inner Circle Trader (ICT)', desc: 'Specializes in institutional Killzones (London/NY), Silver Bullet 60-min models, Fair Value Gaps (FVG), Breaker Blocks, and 2022 Mentorship retracements.' },
+            'SMC': { title: '🏛️ Smart Money Concepts (SMC)', desc: 'Tracks true institutional order flow: Break of Structure (BOS), Change of Character (CHoCH), Market Structure Shift (MSS), and unmitigated Order Blocks.' }
+        };
+
+        function selectGhVisionStrategy(strat) {
+            document.querySelectorAll('.gh-strat-btn').forEach(b => {
+                b.classList.remove('btn-primary');
+                b.classList.add('btn-secondary');
+            });
+            const activeBtn = document.getElementById('ghStrat' + strat);
+            if (activeBtn) {
+                activeBtn.classList.remove('btn-secondary');
+                activeBtn.classList.add('btn-primary');
+            }
+            const hid = document.getElementById('ghVisionStrategy');
+            if (hid) hid.value = strat;
+            showToast('Vision Strategy Priority: ' + strat);
+        }
+
+        function setGhChatStrategy(strat) {
+            ghCurrentChatStrat = strat;
+            document.querySelectorAll('.gh-chat-strat-btn').forEach(b => {
+                if (b.getAttribute('data-strat') === strat) {
+                    b.classList.remove('btn-secondary');
+                    b.classList.add('btn-primary');
+                } else {
+                    b.classList.remove('btn-primary');
+                    b.classList.add('btn-secondary');
+                }
+            });
+            const badge = document.getElementById('ghChatActiveStratBadge');
+            if (badge) badge.textContent = 'Strategy: ' + strat;
+            if (ghStratDescriptions[strat]) {
+                document.getElementById('ghStratInfoTitle').textContent = ghStratDescriptions[strat].title;
+                document.getElementById('ghStratInfoDesc').textContent = ghStratDescriptions[strat].desc;
+            }
+            showToast('AI Chat Strategy set to ' + strat);
+        }
+
+        function sendGhChat() {
+            const inp = document.getElementById('ghChatInput');
+            const msg = inp.value.trim();
+            if (!msg) return;
+            inp.value = '';
+            appendGhChatMessage('user', msg);
+
+            setTimeout(() => {
+                const sym = 'XAUUSD';
+                const p = prices[sym] || prices['XAUUSD'];
+                let reply = '';
+
+                if (ghCurrentChatStrat === 'SNR') {
+                    reply = `### 🧱 Support & Resistance (S&R) Analysis — ${sym} (M15)\n` +
+                            `* **Major Resistance (R1):** $4,058.00 (3 touches, major)\n` +
+                            `* **Major Support (S1):** $4,038.00 (4 touches, major)\n` +
+                            `* **Current Price:** $${p.entry.toFixed(2)}\n` +
+                            `* **Market State:** \`Breakout and Retest Pending\`\n` +
+                            `* **Rejection Wick:** Upper 14.2% | Lower 42.5% (Bullish Pin Bar reaction off S1)\n\n` +
+                            `#### 🎯 S&R Execution Setup:\n` +
+                            `* **Action:** \`BUY\`\n` +
+                            `* **Model:** S&R Confirmed Support Bounce & Retest\n` +
+                            `* **Entry:** $${p.entry.toFixed(2)} | **Stop Loss:** $${p.sl.toFixed(2)}\n` +
+                            `* **TP1:** $${p.tp1.toFixed(2)} (Next Resistance) | **TP2:** $${p.tp2.toFixed(2)}\n` +
+                            `* **Rule Evidence:** Bullish rejection candle tested 4-touch horizontal support with 42% lower wick. Fakeout sellers trapped.`;
+                } else if (ghCurrentChatStrat === 'CRT') {
+                    reply = `### 🕯️ Candle Range Theory (CRT) Analysis — ${sym} (M15)\n` +
+                            `* **Range High (RH):** $4,055.00 | **Range Low (RL):** $4,038.50\n` +
+                            `* **50% Equilibrium (EQ):** $4,046.75\n` +
+                            `* **Phase:** \`BULLISH SWEEP RECLAIM\`\n\n` +
+                            `#### 🎯 CRT Execution Setup:\n` +
+                            `* **Action:** \`BUY\`\n` +
+                            `* **Entry:** $${p.entry.toFixed(2)} | **Stop Loss:** $${p.sl.toFixed(2)}\n` +
+                            `* **TP1 (50% EQ):** $4,046.75 | **TP2 (Range High):** $4,055.00`;
+                } else if (ghCurrentChatStrat === 'ICT') {
+                    reply = `### ⚡ Inner Circle Trader (ICT) Analysis — ${sym} (M15)\n` +
+                            `* **Session:** New York AM Killzone | **Macro:** Institutional Macro Active\n` +
+                            `* **Model:** ICT 2022 Mentorship & Unicorn Retest\n` +
+                            `* **Action:** \`BUY\` | **Entry:** $${p.entry.toFixed(2)} | **SL:** $${p.sl.toFixed(2)} | **TP:** $${p.tp2.toFixed(2)}`;
+                } else if (ghCurrentChatStrat === 'SMC') {
+                    reply = `### 🏛️ Smart Money Concepts (SMC) Analysis — ${sym} (M15)\n` +
+                            `* **Structure:** Market Structure Shift (MSS) with displacement\n` +
+                            `* **Order Block:** Bullish H1 OB ($4,039.00 - $4,042.00)\n` +
+                            `* **Action:** \`BUY\` | **Entry:** $${p.entry.toFixed(2)} | **SL:** $${p.sl.toFixed(2)} | **TP:** $${p.tp2.toFixed(2)}`;
+                } else {
+                    reply = `### 🌐 Multi-Confluence Intelligence (ICT + SMC + CRT + SNR) — ${sym}\n` +
+                            `* **Price:** $${p.entry.toFixed(2)}\n` +
+                            `* **Confluence:** Quad Agreement (CRT Sweep + S&R Bounce + SMC Order Block + ICT Killzone)\n` +
+                            `* **Trade Signal:** \`BUY\` | **SL:** $${p.sl.toFixed(2)} | **TP1:** $${p.tp1.toFixed(2)} | **TP2:** $${p.tp2.toFixed(2)}\n` +
+                            `* **Confidence:** Exceptional (94%)`;
+                }
+
+                appendGhChatMessage('assistant', reply);
+            }, 500);
+        }
+
+        function sendGhQuickPrompt(type) {
+            const inp = document.getElementById('ghChatInput');
+            if (type === 'SNR') {
+                setGhChatStrategy('SNR');
+                inp.value = 'Identify major Support and Resistance levels, confirmed breakouts and retests';
+            } else if (type === 'TRAP') {
+                setGhChatStrategy('SNR');
+                inp.value = 'Watch for rejection candles and false breakout traps (Bull/Bear Trap) at key S&R levels';
+            } else if (type === 'CRT') {
+                setGhChatStrategy('CRT');
+                inp.value = 'Analyze current CRT Range High, Range Low and 50% Equilibrium setup';
+            } else if (type === 'ICT') {
+                setGhChatStrategy('ICT');
+                inp.value = 'Check ICT Silver Bullet window, Killzones and Fair Value Gaps';
+            } else if (type === 'SMC') {
+                setGhChatStrategy('SMC');
+                inp.value = 'Identify SMC Break of Structure (BOS), CHoCH and unmitigated Order Blocks';
+            } else {
+                inp.value = 'Generate complete BUY/SELL/NO TRADE trade signal with exact Entry, SL and TP';
+            }
+            sendGhChat();
+        }
+
+        function clearGhChat() {
+            const stream = document.getElementById('ghChatStream');
+            stream.innerHTML = '<div style="background: var(--bg-elevated); padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border); font-size: 13px; line-height: 1.5;">' +
+                               '<strong style="color: var(--gold-bright);">Chat Cleared:</strong><br>' +
+                               'Select your strategy above (<strong>SNR</strong>, <strong>CRT</strong>, <strong>ICT</strong>, <strong>SMC</strong>, or <strong>ALL</strong>), and ask any question or click a prompt below.</div>';
+            showToast('Chat history reset.');
+        }
+
+        function appendGhChatMessage(sender, text) {
+            const stream = document.getElementById('ghChatStream');
+            const div = document.createElement('div');
+            const isUser = sender === 'user';
+            div.style.cssText = isUser 
+                ? 'align-self: flex-end; background: rgba(59, 130, 246, 0.2); border: 1px solid #3b82f6; color: #fff; padding: 10px 14px; border-radius: 8px; max-width: 80%; font-size: 13px; line-height: 1.4;'
+                : 'align-self: flex-start; background: var(--bg-elevated); border: 1px solid var(--border); color: var(--text-main); padding: 12px 16px; border-radius: 8px; max-width: 85%; font-size: 13px; line-height: 1.5;';
+            div.innerHTML = text.replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code style="background:rgba(255,255,255,0.1);padding:1px 4px;border-radius:3px;">$1</code>');
+            stream.appendChild(div);
+            stream.scrollTop = stream.scrollHeight;
+        }
+
         // Initialize on Load
         window.addEventListener('DOMContentLoaded', () => {
             initTradingView('XAUUSD');

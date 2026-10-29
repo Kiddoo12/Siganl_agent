@@ -12,6 +12,7 @@ use App\Market\MarketDataService;
 use App\SMC\CrtEngine;
 use App\SMC\IctEngine;
 use App\SMC\SmcEngine;
+use App\SMC\SnrEngine;
 
 /**
  * Service handling chart screenshot uploads, AI vision analysis,
@@ -114,7 +115,7 @@ final class ChartVisionService
         $symbol = MarketDataService::normalizeSymbol($symbol);
         $timeframe = strtoupper(trim($timeframe)) ?: 'M15';
         $strategyMode = strtoupper(trim($strategyMode)) ?: 'ALL';
-        if (!in_array($strategyMode, ['ICT', 'SMC', 'CRT', 'ALL'], true)) {
+        if (!in_array($strategyMode, ['ICT', 'SMC', 'CRT', 'SNR', 'ALL'], true)) {
             $strategyMode = 'ALL';
         }
 
@@ -327,10 +328,11 @@ final class ChartVisionService
         string $strategyMode = 'ALL'
     ): string {
         $strategyDirective = match ($strategyMode) {
+            'SNR' => "STRATEGY DIRECTIVE: SUPPORT AND RESISTANCE (SNR). Focus on identifying major multi-touch horizontal price levels, confirmed breakouts and retests (broken resistance flipping into support or broken support flipping into resistance), and rejection candles / false breakout traps (pin bars, hammers, shooting stars, bull/bear traps).",
             'CRT' => "STRATEGY DIRECTIVE: CANDLE RANGE THEORY (CRT). Focus on previous reference candle boundaries (Range High RH, Range Low RL, and 50% Equilibrium EQ). Detect if price has swept a boundary and reclaimed inside the range (targeting 50% EQ & opposing boundary), or if a directional range expansion breakout is underway.",
             'ICT' => "STRATEGY DIRECTIVE: INNER CIRCLE TRADER (ICT). Prioritize ICT Killzones, Silver Bullet, Fair Value Gaps (FVG), 2022 Mentorship Model (MSS + displacement into FVG), and Breaker Blocks.",
             'SMC' => "STRATEGY DIRECTIVE: SMART MONEY CONCEPTS (SMC). Prioritize Break of Structure (BOS), Change of Character (CHoCH), Order Blocks (OB), and resting liquidity pools (BSL/SSL).",
-            default => "STRATEGY DIRECTIVE: MULTI-CONFLUENCE. Synthesize ICT, SMC, and CRT (Candle Range Theory) into the highest-conviction setup."
+            default => "STRATEGY DIRECTIVE: MULTI-CONFLUENCE. Synthesize ICT, SMC, CRT (Candle Range Theory), and Support & Resistance (SNR) into the highest-conviction setup."
         };
 
         return <<<PROMPT
@@ -465,6 +467,9 @@ PROMPT;
         $crtEngine = new CrtEngine();
         $crtRes = $crtEngine->analyze($c);
 
+        $snrEngine = new SnrEngine();
+        $snrRes = $snrEngine->analyze($c);
+
         $trend = $smcRes['trend'] ?? 0;
         $isBull = ($trend === 1);
         $isBear = ($trend === -1);
@@ -479,8 +484,37 @@ PROMPT;
         $tp3 = null;
         $tradeDirection = 'WAITING';
         $crtData = $crtRes['reference_candle'] ?? null;
+        $snrData = [
+            'nearest_resistance' => $snrRes['nearest_resistance'] ?? null,
+            'nearest_support'    => $snrRes['nearest_support'] ?? null,
+            'all_resistances'    => $snrRes['all_resistances'] ?? [],
+            'all_supports'       => $snrRes['all_supports'] ?? [],
+            'market_state'       => $snrRes['market_state'] ?? 'range_consolidation',
+            'rejection'          => $snrRes['rejection_candle'] ?? [],
+        ];
 
-        if ($strategyMode === 'CRT') {
+        if ($strategyMode === 'SNR') {
+            if (!empty($snrRes['trade_setup'])) {
+                $ss = $snrRes['trade_setup'];
+                $primaryStrat = $ss['name'];
+                $bias = $ss['bias'];
+                $isBull = ($ss['direction'] === 'BUY');
+                $isBear = ($ss['direction'] === 'SELL');
+                $structLabel = 'S&R ' . ucwords(str_replace('_', ' ', (string)($snrRes['market_state'] ?? '')));
+                $entryZone = $ss['entry_zone'];
+                $entry = $ss['entry'];
+                $sl = $ss['stop_loss'];
+                $tp1 = $ss['tp1'];
+                $tp2 = $ss['tp2'];
+                $tp3 = round($isBull ? $tp2 + abs($tp2 - $tp1) : $tp2 - abs($tp1 - $tp2), 2);
+                $tradeDirection = $ss['direction'];
+            } else {
+                $primaryStrat = 'S&R Range Consolidation';
+                $bias = $snrRes['bias'];
+                $structLabel = 'S&R ' . ucwords(str_replace('_', ' ', (string)($snrRes['market_state'] ?? '')));
+                $tradeDirection = 'WAITING';
+            }
+        } elseif ($strategyMode === 'CRT') {
             if (!empty($crtRes['trade_setup'])) {
                 $cs = $crtRes['trade_setup'];
                 $primaryStrat = $cs['name'];
@@ -560,6 +594,7 @@ PROMPT;
             'market_structure'    => $structLabel,
             'strategy_mode'       => $strategyMode,
             'crt_data'            => $crtData,
+            'snr_data'            => $snrData,
             'structure_details'   => sprintf(
                 'Chart demonstrates %s flow under %s strategy mode. Recent %s confirmed around $%.2f with ATR volatility of $%.2f.',
                 strtolower($bias), $strategyMode, $structLabel, (float)($lastEvt['level'] ?? $refPrice), $atr
@@ -621,6 +656,12 @@ PROMPT;
         if (!empty($report['crt_data']['range_high'])) {
             $prices[] = (float)$report['crt_data']['range_high'];
             $prices[] = (float)$report['crt_data']['range_low'];
+        }
+        if (!empty($report['snr_data']['nearest_resistance']['price'])) {
+            $prices[] = (float)$report['snr_data']['nearest_resistance']['price'];
+        }
+        if (!empty($report['snr_data']['nearest_support']['price'])) {
+            $prices[] = (float)$report['snr_data']['nearest_support']['price'];
         }
 
         $maxP = max($prices) * 1.002;
@@ -705,6 +746,33 @@ PROMPT;
                     'color' => '#38bdf8',
                     'price' => $rl,
                     'dash'  => [8, 4],
+                ];
+            }
+        }
+
+        // Add S&R Key Level Lines when present
+        if (!empty($report['snr_data'])) {
+            $snr = $report['snr_data'];
+            if (!empty($snr['nearest_resistance']['price'])) {
+                $nr = (float)$snr['nearest_resistance']['price'];
+                $elements[] = [
+                    'type'  => 'line',
+                    'label' => "MAJOR RESISTANCE ($nr)",
+                    'y'     => $priceToY($nr),
+                    'color' => '#f43f5e',
+                    'price' => $nr,
+                    'dash'  => [8, 3],
+                ];
+            }
+            if (!empty($snr['nearest_support']['price'])) {
+                $ns = (float)$snr['nearest_support']['price'];
+                $elements[] = [
+                    'type'  => 'line',
+                    'label' => "MAJOR SUPPORT ($ns)",
+                    'y'     => $priceToY($ns),
+                    'color' => '#10b981',
+                    'price' => $ns,
+                    'dash'  => [8, 3],
                 ];
             }
         }

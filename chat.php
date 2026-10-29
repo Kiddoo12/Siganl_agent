@@ -17,7 +17,7 @@ $csrf = Csrf::token();
 $activeSymbol = MarketDataService::normalizeSymbol($_GET['symbol'] ?? 'XAUUSD');
 $activeTf = strtoupper(trim($_GET['tf'] ?? 'M15'));
 $activeStrategy = strtoupper(trim($_GET['strategy'] ?? 'ALL'));
-if (!in_array($activeStrategy, ['ICT', 'SMC', 'CRT', 'ALL'], true)) {
+if (!in_array($activeStrategy, ['ICT', 'SMC', 'CRT', 'SNR', 'ALL'], true)) {
     $activeStrategy = 'ALL';
 }
 
@@ -54,8 +54,16 @@ $livePrice = $quote['available'] ? (float)$quote['price'] : 2400.0;
                 <label class="strat-radio-card <?= $activeStrategy === 'ALL' ? 'active' : '' ?>">
                     <input type="radio" name="chat_strat" value="ALL" <?= $activeStrategy === 'ALL' ? 'checked' : '' ?> onchange="setChatStrategy('ALL')">
                     <div style="flex: 1;">
-                        <div style="font-weight: 700; font-size: 13px;">🌐 Triple Confluence</div>
-                        <div class="muted" style="font-size: 11px;">ICT + SMC + CRT consensus filter</div>
+                        <div style="font-weight: 700; font-size: 13px;">🌐 Multi-Confluence</div>
+                        <div class="muted" style="font-size: 11px;">ICT + SMC + CRT + S&R consensus filter</div>
+                    </div>
+                </label>
+
+                <label class="strat-radio-card <?= $activeStrategy === 'SNR' ? 'active' : '' ?>">
+                    <input type="radio" name="chat_strat" value="SNR" <?= $activeStrategy === 'SNR' ? 'checked' : '' ?> onchange="setChatStrategy('SNR')">
+                    <div style="flex: 1;">
+                        <div style="font-weight: 700; font-size: 13px;">🧱 SNR (Support & Resistance)</div>
+                        <div class="muted" style="font-size: 11px;">Major levels, breakouts, retests & traps</div>
                     </div>
                 </label>
 
@@ -157,6 +165,12 @@ $livePrice = $quote['available'] ? (float)$quote['price'] : 2400.0;
 
         <!-- Quick Prompt Pills Bar -->
         <div style="padding: 8px 18px; border-top: 1px solid var(--border); background: var(--bg-panel); display: flex; gap: 8px; overflow-x: auto; white-space: nowrap;">
+            <button type="button" class="btn btn-xs btn-secondary" onclick="sendQuickPrompt('Identify major Support and Resistance levels, confirmed breakouts and retests')">
+                🧱 S&R Breakout &amp; Retest
+            </button>
+            <button type="button" class="btn btn-xs btn-secondary" onclick="sendQuickPrompt('Watch for rejection candles and false breakout traps (Bull/Bear Trap) at S&R levels')">
+                🧱 S&R Traps &amp; Fakeouts
+            </button>
             <button type="button" class="btn btn-xs btn-secondary" onclick="sendQuickPrompt('Analyze current CRT Range High, Range Low and 50% Equilibrium setup')">
                 🕯️ CRT Range &amp; Reclaim
             </button>
@@ -284,8 +298,12 @@ let currentTf = '<?= Validator::e($activeTf) ?>';
 
 const stratInfo = {
     'ALL': {
-        title: '🌐 Triple Confluence (ICT + SMC + CRT)',
-        desc: 'Evaluates setups through ICT time/price delivery, SMC structural order blocks, and CRT reference candle boundaries simultaneously. Only authorizes trades when all models agree.'
+        title: '🌐 Multi-Confluence (ICT + SMC + CRT + SNR)',
+        desc: 'Evaluates setups through ICT killzones/FVGs, SMC structural order blocks, CRT reference candle sweeps, and major Support & Resistance breakout/retests simultaneously. Only authorizes trades when high confluence is confirmed.'
+    },
+    'SNR': {
+        title: '🧱 Support & Resistance (S&R)',
+        desc: 'Identifies major multi-touch horizontal levels, trades confirmed breakouts and role-reversal retests (resistance turning into support and vice versa), and watches for rejection candles and false breakout traps.'
     },
     'CRT': {
         title: '🕯️ Candle Range Theory (CRT)',

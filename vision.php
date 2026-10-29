@@ -65,28 +65,32 @@ $csrf = Csrf::token();
             <input type="hidden" name="_csrf" value="<?= Validator::e($csrf) ?>">
             <input type="hidden" id="base64Payload" name="image_base64" value="">
 
-            <!-- Strategy Selector (ICT, SMC, CRT, ALL) -->
+            <!-- Strategy Selector (ICT, SMC, CRT, SNR, ALL) -->
             <div style="margin-bottom: 14px;">
                 <label class="form-label" style="display:flex;justify-content:space-between;align-items:center;">
                     <span>Trading Strategy Priority</span>
                     <span class="badge" style="background: rgba(245, 158, 11, 0.15); color: var(--gold-bright); font-size: 10px;">Select Strategy</span>
                 </label>
-                <div class="strategy-selector-chips" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 4px;">
+                <div class="strategy-selector-chips" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 4px;">
                     <button type="button" class="strat-chip-btn active" data-strat="ALL" onclick="selectVisionStrategy('ALL')">
-                        <span style="display:block;font-size:12.5px;font-weight:750;">🌐 ALL</span>
-                        <span style="font-size:9.5px;opacity:0.75;">Confluence</span>
+                        <span style="display:block;font-size:12px;font-weight:750;">🌐 ALL</span>
+                        <span style="font-size:9px;opacity:0.75;">Confluence</span>
                     </button>
-                    <button type="button" class="strat-chip-btn" data-strat="ICT" onclick="selectVisionStrategy('ICT')">
-                        <span style="display:block;font-size:12.5px;font-weight:750;">⚡ ICT</span>
-                        <span style="font-size:9.5px;opacity:0.75;">Killzone/FVG</span>
-                    </button>
-                    <button type="button" class="strat-chip-btn" data-strat="SMC" onclick="selectVisionStrategy('SMC')">
-                        <span style="display:block;font-size:12.5px;font-weight:750;">🏛️ SMC</span>
-                        <span style="font-size:9.5px;opacity:0.75;">BOS / OB</span>
+                    <button type="button" class="strat-chip-btn" data-strat="SNR" onclick="selectVisionStrategy('SNR')">
+                        <span style="display:block;font-size:12px;font-weight:750;">🧱 SNR</span>
+                        <span style="font-size:9px;opacity:0.75;">S&amp;R Levels</span>
                     </button>
                     <button type="button" class="strat-chip-btn" data-strat="CRT" onclick="selectVisionStrategy('CRT')">
-                        <span style="display:block;font-size:12.5px;font-weight:750;">🕯️ CRT</span>
-                        <span style="font-size:9.5px;opacity:0.75;">Range Reclaim</span>
+                        <span style="display:block;font-size:12px;font-weight:750;">🕯️ CRT</span>
+                        <span style="font-size:9px;opacity:0.75;">Range Reclaim</span>
+                    </button>
+                    <button type="button" class="strat-chip-btn" data-strat="ICT" onclick="selectVisionStrategy('ICT')">
+                        <span style="display:block;font-size:12px;font-weight:750;">⚡ ICT</span>
+                        <span style="font-size:9px;opacity:0.75;">Killzone/FVG</span>
+                    </button>
+                    <button type="button" class="strat-chip-btn" data-strat="SMC" onclick="selectVisionStrategy('SMC')">
+                        <span style="display:block;font-size:12px;font-weight:750;">🏛️ SMC</span>
+                        <span style="font-size:9px;opacity:0.75;">BOS / OB</span>
                     </button>
                 </div>
                 <input type="hidden" id="strategyModeInput" name="strategy_mode" value="ALL">

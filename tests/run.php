@@ -483,6 +483,44 @@ $chatSmc = httpReq('POST', "$base/api/chat.php", [
 ], ['X-CSRF-Token: ' . $csrf], false, $cookieFile);
 assertTrue($chatSmc['code'] === 200 && $chatSmc['json']['strategy_mode'] === 'SMC', 'POST /api/chat.php processes SMC strategy selection');
 
+// 7h. Support & Resistance (SNR) Engine
+$snrEngine = new \App\SMC\SnrEngine();
+$mockSnrCandles = [
+    ['t' => 1000, 'o' => 2400.0, 'h' => 2410.0, 'l' => 2395.0, 'c' => 2405.0],
+    ['t' => 1060, 'o' => 2405.0, 'h' => 2425.0, 'l' => 2404.0, 'c' => 2420.0],
+    ['t' => 1120, 'o' => 2420.0, 'h' => 2422.0, 'l' => 2398.0, 'c' => 2400.0],
+    ['t' => 1180, 'o' => 2400.0, 'h' => 2426.0, 'l' => 2402.0, 'c' => 2422.0],
+    ['t' => 1240, 'o' => 2422.0, 'h' => 2424.0, 'l' => 2397.0, 'c' => 2400.0],
+    ['t' => 1300, 'o' => 2400.0, 'h' => 2408.0, 'l' => 2392.0, 'c' => 2402.0],
+];
+$snrRes = $snrEngine->analyze($mockSnrCandles);
+assertTrue($snrRes['ok'] === true, 'SnrEngine executes successfully on candle series');
+assertTrue(!empty($snrRes['all_resistances']), 'SnrEngine identifies major horizontal resistance levels');
+assertTrue(!empty($snrRes['all_supports']), 'SnrEngine identifies major horizontal support levels');
+assertTrue(!empty($snrRes['trade_setup']['code']) && $snrRes['trade_setup']['code'] === 'snr_false_breakout', 'SnrEngine identifies Bear Trap false breakout below support with rejection candle');
+
+// 7i. Strategy-Selected AI Vision Analysis with SNR Mode
+$visSnrPost = httpReq('POST', "$base/api/vision_analyze.php", [
+    'image_base64'  => 'data:image/png;base64,' . $testPngBase64,
+    'symbol'        => 'XAUUSD',
+    'timeframe'     => 'M15',
+    'strategy_mode' => 'SNR',
+    '_csrf'         => $csrf,
+], ['X-CSRF-Token: ' . $csrf], false, $cookieFile);
+assertTrue($visSnrPost['code'] === 200 && str_contains($visSnrPost['json']['report']['strategy_mode'] ?? '', 'SNR'), 'POST /api/vision_analyze.php supports SNR strategy mode');
+
+// 7j. AI Chat Analyst Endpoint with SNR Strategy Selection
+$chatSnr = httpReq('POST', "$base/api/chat.php", [
+    'action'        => 'send',
+    'message'       => 'Analyze current Support and Resistance levels, confirmed breakouts and retests on XAUUSD',
+    'strategy_mode' => 'SNR',
+    'symbol'        => 'XAUUSD',
+    'timeframe'     => 'M15',
+    '_csrf'         => $csrf,
+], ['X-CSRF-Token: ' . $csrf], false, $cookieFile);
+assertTrue($chatSnr['code'] === 200 && !empty($chatSnr['json']['ok']) && $chatSnr['json']['strategy_mode'] === 'SNR', 'POST /api/chat.php processes SNR strategy selection');
+assertTrue(str_contains($chatSnr['json']['reply'], 'Support & Resistance'), 'AI Chat outputs detailed Support & Resistance analysis');
+
 $chatHist = httpReq('GET', "$base/api/chat.php?action=history&symbol=XAUUSD", null, [], false, $cookieFile);
 assertTrue($chatHist['code'] === 200 && is_array($chatHist['json']['history']) && count($chatHist['json']['history']) >= 3, 'GET /api/chat.php?action=history returns conversation log');
 
