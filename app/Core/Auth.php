@@ -35,11 +35,17 @@ final class Auth
     public static function attempt(string $email, string $password): array
     {
         $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-        if (!RateLimiter::hit('login:' . $ip, 10, 900) || !RateLimiter::hit('login:' . strtolower($email), 5, 900)) {
+        $emailKey = strtolower(trim($email));
+
+        // Block only if already locked out
+        if (RateLimiter::isLocked('login:' . $ip, 25, 900) || RateLimiter::isLocked('login:' . $emailKey, 10, 900)) {
             return ['ok' => false, 'error' => 'Too many login attempts. Try again in 15 minutes.'];
         }
-        $user = Database::fetch('SELECT * FROM users WHERE email = ? LIMIT 1', [strtolower(trim($email))]);
+
+        $user = Database::fetch('SELECT * FROM users WHERE email = ? LIMIT 1', [$emailKey]);
         if (!$user || !password_verify($password, $user['password_hash'])) {
+            RateLimiter::hit('login:' . $ip, 25, 900);
+            RateLimiter::hit('login:' . $emailKey, 10, 900);
             Logger::audit('login_failed', 'user', null, ['email' => $email], $user['id'] ?? null);
             return ['ok' => false, 'error' => 'Invalid email or password.'];
         }
@@ -49,13 +55,15 @@ final class Auth
         if (password_needs_rehash($user['password_hash'], PASSWORD_DEFAULT)) {
             Database::update('users', ['password_hash' => password_hash($password, PASSWORD_DEFAULT)], 'id = ?', [$user['id']]);
         }
-        session_regenerate_id(true);
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id(true);
+        }
         $_SESSION['uid'] = (int)$user['id'];
         $_SESSION['csrf'] = bin2hex(random_bytes(32));
         Database::update('users', ['last_login_at' => gmdate('Y-m-d H:i:s')], 'id = ?', [$user['id']]);
         Logger::audit('login', 'user', $user['id'], [], (int)$user['id']);
         RateLimiter::clear('login:' . $ip);
-        RateLimiter::clear('login:' . strtolower($email));
+        RateLimiter::clear('login:' . $emailKey);
         return ['ok' => true];
     }
 

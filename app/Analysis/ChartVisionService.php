@@ -308,22 +308,10 @@ final class ChartVisionService
     }
 
     /**
-     * Institutional System Prompt enforcing structured 14-point report, price safety,
-     * and Few-Shot RAG Exemplar Injection from reviewed Ground-Truth datasets.
+     * Institutional System Prompt enforcing structured 14-point report and price safety.
      */
     private static function buildSystemPrompt(string $symbol, string $timeframe, float $refPrice, ?string $broker, ?string $chartTz): string
     {
-        $ragPrompt = '';
-        try {
-            $ragService = new \App\Vision\VisionRagService();
-            $rag = $ragService->retrieveExemplars($symbol, $timeframe, 3);
-            if (!empty($rag['prompt_context'])) {
-                $ragPrompt = "\n" . $rag['prompt_context'] . "\n";
-            }
-        } catch (\Throwable $e) {
-            // Non-blocking RAG retrieval
-        }
-
         return <<<PROMPT
 You are a top-tier institutional ICT (Inner Circle Trader) and SMC (Smart Money Concepts) Market Analyst specializing in {$symbol}.
 Analyze the provided trading chart image rigorously and return ONLY a valid, minified JSON object matching the required schema.

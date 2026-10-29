@@ -30,6 +30,24 @@ final class RateLimiter
         }
     }
 
+    public static function isLocked(string $key, int $max, int $windowSeconds): bool
+    {
+        try {
+            $key = substr(hash('sha256', $key), 0, 64);
+            $row = Database::fetch('SELECT hits, window_start FROM rate_limits WHERE rl_key = ?', [$key]);
+            if (!$row) {
+                return false;
+            }
+            $now = time();
+            if ($now - (int)$row['window_start'] >= $windowSeconds) {
+                return false;
+            }
+            return (int)$row['hits'] >= $max;
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
     public static function clear(string $key): void
     {
         try {
