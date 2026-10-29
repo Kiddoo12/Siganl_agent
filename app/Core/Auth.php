@@ -54,6 +54,8 @@ final class Auth
         $_SESSION['csrf'] = bin2hex(random_bytes(32));
         Database::update('users', ['last_login_at' => gmdate('Y-m-d H:i:s')], 'id = ?', [$user['id']]);
         Logger::audit('login', 'user', $user['id'], [], (int)$user['id']);
+        RateLimiter::clear('login:' . $ip);
+        RateLimiter::clear('login:' . strtolower($email));
         return ['ok' => true];
     }
 
