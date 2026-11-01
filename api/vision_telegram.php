@@ -6,6 +6,8 @@ require dirname(__DIR__) . '/app/bootstrap.php';
 use App\Analysis\ChartVisionService;
 use App\Core\Auth;
 use App\Core\Csrf;
+use App\Core\Logger;
+use App\Core\RateLimiter;
 use App\Core\Response;
 
 Auth::startSession();
@@ -27,10 +29,13 @@ if (empty($input)) {
     }
 }
 
-// CSRF check
-$csrfHeader = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($input['_csrf'] ?? null);
-if (!Csrf::validate($csrfHeader)) {
+$csrfHeader = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($input['_csrf'] ?? ($input['csrf_token'] ?? null));
+if (!Csrf::validate(is_string($csrfHeader) ? $csrfHeader : null)) {
     Response::json(['ok' => false, 'error' => 'Invalid or expired CSRF token.'], 403);
+}
+
+if (!RateLimiter::hit('vision_tg:' . $user['id'], 15, 60)) {
+    Response::json(['ok' => false, 'error' => 'Too many Telegram dispatches. Please wait a minute before trying again.'], 429);
 }
 
 $analysisId = isset($input['analysis_id']) && is_numeric($input['analysis_id']) ? (int)$input['analysis_id'] : 0;
@@ -39,10 +44,18 @@ if ($analysisId <= 0) {
 }
 
 try {
-    $result = ChartVisionService::sendToTelegram($analysisId, (int)$user['id']);
+    $isAdmin = (($user['role'] ?? '') === 'admin');
+    $result = ChartVisionService::sendToTelegram($analysisId, (int)$user['id'], $isAdmin);
     Response::json($result);
 } catch (\InvalidArgumentException $e) {
     Response::json(['ok' => false, 'error' => $e->getMessage()], 404);
+} catch (\RuntimeException $e) {
+    $code = (int)$e->getCode();
+    if ($code < 400 || $code > 599) {
+        $code = 422;
+    }
+    Response::json(['ok' => false, 'error' => $e->getMessage()], $code);
 } catch (\Throwable $e) {
-    Response::json(['ok' => false, 'error' => $e->getMessage()], 500);
+    Logger::error('Vision Telegram error', ['analysis_id' => $analysisId]);
+    Response::json(['ok' => false, 'error' => 'Failed to dispatch vision report to Telegram.'], 500);
 }

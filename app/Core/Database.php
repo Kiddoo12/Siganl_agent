@@ -38,6 +38,11 @@ final class Database
         return $stmt;
     }
 
+    public static function execute(string $sql, array $params = []): int
+    {
+        return self::query($sql, $params)->rowCount();
+    }
+
     public static function fetch(string $sql, array $params = []): ?array
     {
         $row = self::query($sql, $params)->fetch();

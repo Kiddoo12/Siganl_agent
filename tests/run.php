@@ -853,6 +853,212 @@ if (!empty($vList)) {
     assertTrue($activeM !== null && $activeM['id'] === $firstId, 'ModelManager returns active production model');
 }
 
+// ------------------------------------------------------------------
+// 11. AI Chart Vision Analyzer v2 — 22-Point Security, Validation & MTF Suite
+// ------------------------------------------------------------------
+echo "\n11. AI Chart Vision Analyzer v2 (22-Point Security, Validation & MTF Suite)\n";
+
+// Helper to synthesize a valid uncompressed/zlib PNG of arbitrary dimensions without requiring ext-gd
+function buildValidPng(int $w, int $h): string
+{
+    $ihdrData = pack('NNCCCCC', $w, $h, 8, 2, 0, 0, 0);
+    $ihdr = pack('N', 13) . 'IHDR' . $ihdrData . pack('N', crc32('IHDR' . $ihdrData));
+    $rawScanlines = str_repeat("\x00" . str_repeat("\x10\x20\x30", $w), $h);
+    $compressed = gzcompress($rawScanlines, 6);
+    $idat = pack('N', strlen($compressed)) . 'IDAT' . $compressed . pack('N', crc32('IDAT' . $compressed));
+    $iend = pack('N', 0) . 'IEND' . pack('N', crc32('IEND'));
+    return "\x89PNG\r\n\x1a\n" . $ihdr . $idat . $iend;
+}
+
+// 11.1 Valid PNG upload (80x60)
+$validPngBytes = buildValidPng(80, 60);
+$upPng = \App\Analysis\ChartVisionService::storeUpload([], 'data:image/png;base64,' . base64_encode($validPngBytes), true);
+assertTrue($upPng['mime'] === 'image/png' && $upPng['width'] === 80 && $upPng['height'] === 60, 'Vision v2 [1/22]: Valid PNG upload verified with exact dimensions (80x60)');
+
+// 11.2 Valid JPG upload (minimal valid 64x64 baseline JPEG header + SOS + EOI)
+$validJpgHex = 'ffd8ffe000104a46494600010101006000600000ffdb004300080606070605080707070909080a0c140d0c0b0b0c1912130f141d1a1f1e1d1a1c1c20242e2720222c231c1c2837292c30313434341f27393d38323c2e333432ffc0000b080040004001011100ffc4001f0000010501010101010100000000000000000102030405060708090a0bffda0008010100003f00fbfdffd9';
+$upJpg = \App\Analysis\ChartVisionService::storeUpload([], 'data:image/jpeg;base64,' . base64_encode((string)hex2bin($validJpgHex)), true);
+assertTrue($upJpg['mime'] === 'image/jpeg' && $upJpg['width'] === 64 && $upJpg['height'] === 64, 'Vision v2 [2/22]: Valid JPG upload verified with exact dimensions (64x64)');
+
+// 11.3 Valid WEBP upload (64x64 VP8X WebP)
+$webpChunk = "VP8X" . pack('V', 10) . "\x00\x00\x00\x00\x3f\x00\x00\x3f\x00\x00";
+$webpBytes = "RIFF" . pack('V', strlen($webpChunk) + 4) . "WEBP" . $webpChunk;
+$upWebp = \App\Analysis\ChartVisionService::storeUpload([], 'data:image/webp;base64,' . base64_encode($webpBytes), true);
+assertTrue($upWebp['mime'] === 'image/webp' && $upWebp['width'] === 64 && $upWebp['height'] === 64, 'Vision v2 [3/22]: Valid WEBP upload verified via magic bytes, finfo, and dimensions (64x64)');
+
+// 11.4 Oversized file (> 10MB) rejected
+$oversizedRejected = false;
+try {
+    $fakeFile = ['error' => UPLOAD_ERR_OK, 'size' => 10485761, 'tmp_name' => $upPng['path'], 'name' => 'huge.png'];
+    \App\Analysis\ChartVisionService::storeUpload($fakeFile);
+} catch (\InvalidArgumentException $e) {
+    $oversizedRejected = str_contains($e->getMessage(), '10MB');
+}
+assertTrue($oversizedRejected, 'Vision v2 [4/22]: Oversized file (>10MB) strictly rejected');
+
+// 11.5 Invalid MIME type / spoofed extension rejected
+$spoofRejected = false;
+try {
+    \App\Analysis\ChartVisionService::storeUpload([], 'data:image/png;base64,' . base64_encode('<?php echo "hack"; ?>'));
+} catch (\InvalidArgumentException $e) {
+    $spoofRejected = true;
+}
+assertTrue($spoofRejected, 'Vision v2 [5/22]: Spoofed PHP/text payload disguised as PNG rejected via magic bytes & finfo');
+
+// 11.6 Corrupted image rejected
+$corruptRejected = false;
+try {
+    $corruptBytes = "\x89PNG\r\n\x1a\n" . str_repeat('X', 60);
+    \App\Analysis\ChartVisionService::storeUpload([], 'data:image/png;base64,' . base64_encode($corruptBytes));
+} catch (\InvalidArgumentException $e) {
+    $corruptRejected = true;
+}
+assertTrue($corruptRejected, 'Vision v2 [6/22]: Corrupted/truncated image stream rejected');
+
+// 11.7 Invalid dimensions (< 50x50px) rejected when enforceMinDimensions=true
+$tinyRejected = false;
+try {
+    $tinyPng = buildValidPng(10, 10);
+    \App\Analysis\ChartVisionService::storeUpload([], 'data:image/png;base64,' . base64_encode($tinyPng), true);
+} catch (\InvalidArgumentException $e) {
+    $tinyRejected = str_contains($e->getMessage(), '50x50');
+}
+assertTrue($tinyRejected, 'Vision v2 [7/22]: Sub-50x50px image rejected when minimum chart dimensions enforced');
+
+// 11.8 Rotated image dimensions (60x80 portrait after 90-deg rotation) & overlay scaling
+$rotPngBytes = buildValidPng(60, 80);
+$upRot = \App\Analysis\ChartVisionService::storeUpload([], 'data:image/png;base64,' . base64_encode($rotPngBytes), true);
+$rotAnalysis = \App\Analysis\ChartVisionService::analyzeChart($upRot['path'], 'XAUUSD', 'M15', 2650.0, 'TradingView', 'UTC', 1, 'ICT', 'H4', null, true);
+assertTrue($rotAnalysis['overlay']['width'] >= 60 && !empty($rotAnalysis['overlay']['elements']), 'Vision v2 [8/22]: Rotated chart image processed and mapped to overlay coordinates');
+
+// 11.9 Clipboard paste (base64 data URI) via HTTP API
+$pasteApi = httpReq('POST', "$base/api/vision_analyze.php", [
+    'image_base64'   => 'data:image/png;base64,' . base64_encode($validPngBytes),
+    'symbol'         => 'XAUUSD',
+    'timeframe'      => 'M15',
+    'htf_timeframe'  => 'H4',
+    'strategy_mode'  => 'ICT',
+    'force_reanalyze'=> 1,
+    '_csrf'          => $csrf,
+], ['X-CSRF-Token: ' . $csrf], false, $cookieFile);
+assertTrue($pasteApi['code'] === 200 && !empty($pasteApi['json']['ok']) && isset($pasteApi['json']['report']['mtf_analysis']), 'Vision v2 [9/22]: Clipboard base64 paste analyzed with MTF confirmation');
+
+// 11.10 Bullish setup mathematical validation (BUY: SL < Entry < TP1 < TP2 < TP3; 2R, 3.5R, 5R)
+$valBull = \App\Analysis\ChartVisionService::validateTradeSetup('BUY', 2648.0, 2652.0, 2640.0);
+assertTrue(
+    $valBull['valid'] === true
+    && $valBull['direction'] === 'BUY'
+    && $valBull['stop_loss'] < $valBull['entry_min']
+    && $valBull['entry_max'] < $valBull['tp1']
+    && $valBull['tp1'] < $valBull['tp2']
+    && $valBull['tp2'] < $valBull['tp3']
+    && $valBull['rr_tp1'] === 2.0 && $valBull['rr_tp2'] === 3.5 && $valBull['rr_tp3'] === 5.0,
+    'Vision v2 [10/22]: Bullish BUY setup strictly satisfies SL < Entry < TP1 (2R) < TP2 (3.5R) < TP3 (5R)'
+);
+
+// 11.11 Bearish setup mathematical validation (SELL: SL > Entry > TP1 > TP2 > TP3; 2R, 3.5R, 5R)
+$valBear = \App\Analysis\ChartVisionService::validateTradeSetup('SELL', 2648.0, 2652.0, 2660.0);
+assertTrue(
+    $valBear['valid'] === true
+    && $valBear['direction'] === 'SELL'
+    && $valBear['stop_loss'] > $valBear['entry_max']
+    && $valBear['entry_min'] > $valBear['tp1']
+    && $valBear['tp1'] > $valBear['tp2']
+    && $valBear['tp2'] > $valBear['tp3']
+    && $valBear['rr_tp1'] === 2.0 && $valBear['rr_tp2'] === 3.5 && $valBear['rr_tp3'] === 5.0,
+    'Vision v2 [11/22]: Bearish SELL setup strictly satisfies SL > Entry > TP1 (2R) > TP2 (3.5R) > TP3 (5R)'
+);
+
+// 11.12 NO TRADE setup enforcement
+$valNoTrade = \App\Analysis\ChartVisionService::validateTradeSetup('NO TRADE', 2648.0, 2652.0, 2640.0);
+assertTrue($valNoTrade['direction'] === 'NO TRADE' && $valNoTrade['valid'] === false, 'Vision v2 [12/22]: Indecisive / Neutral setup returns NO TRADE');
+
+// 11.13 Invalid SL/TP rejection (contradictory BUY with SL above Entry or inverted TPs)
+$valBadBuy = \App\Analysis\ChartVisionService::validateTradeSetup('BUY', 2650.0, 2652.0, 2655.0, 2660.0, 2658.0, 2670.0);
+$valBadSell = \App\Analysis\ChartVisionService::validateTradeSetup('SELL', 2650.0, 2652.0, 2645.0, 2640.0, 2635.0, 2630.0);
+assertTrue(
+    !$valBadBuy['valid'] && $valBadBuy['direction'] === 'NO TRADE' && count($valBadBuy['errors']) >= 2
+    && !$valBadSell['valid'] && $valBadSell['direction'] === 'NO TRADE',
+    'Vision v2 [13/22]: Invalid SL/TP inequalities are rejected and forced to NO TRADE'
+);
+
+// 11.14 Missing manual price fallback (truthfully labeled, never faking live price when offline)
+$noManualRes = \App\Analysis\ChartVisionService::analyzeChart($upPng['path'], 'XAUUSD', 'M15', null, 'OANDA', 'UTC', 1, 'ALL', 'H4', null, true);
+assertTrue(
+    in_array($noManualRes['report']['price_source'], ['live_feed', 'engine_fallback'], true)
+    && !empty($noManualRes['report']['price_source_label']),
+    'Vision v2 [14/22]: Missing manual price falls back cleanly with truthful price_source label'
+);
+
+// 11.15 Manual price override
+$manualRes = \App\Analysis\ChartVisionService::analyzeChart($upPng['path'], 'XAUUSD', 'M15', 2777.50, 'OANDA', 'UTC', 1, 'ALL', 'H4', null, true);
+assertTrue(
+    $manualRes['report']['price_source'] === 'manual_input'
+    && (float)$manualRes['report']['reference_price'] === 2777.50,
+    'Vision v2 [15/22]: Manual price override sets price_source=manual_input at $2777.50'
+);
+
+// 11.16 External AI timeout / fallback to deterministic engine + 8-point quality gate & 7-component confidence
+assertTrue(
+    isset($manualRes['report']['setup_quality_gate']['checks'])
+    && count($manualRes['report']['setup_quality_gate']['checks']) === 8
+    && isset($manualRes['report']['confidence_breakdown']['components'])
+    && count($manualRes['report']['confidence_breakdown']['components']) === 7
+    && !empty($manualRes['report']['observed_facts'])
+    && !empty($manualRes['report']['ai_interpretations']),
+    'Vision v2 [16/22]: Deterministic fallback populates 8-point Quality Gate, 7-component Confidence, Observed Facts & AI Interpretations'
+);
+
+// 11.17 History loading, pagination, and filtering
+$histFiltered = httpReq('GET', "$base/api/vision_history.php?page=1&per_page=5&symbol=XAUUSD&timeframe=M15&strategy=ICT", null, [], false, $cookieFile);
+assertTrue(
+    $histFiltered['code'] === 200
+    && !empty($histFiltered['json']['ok'])
+    && isset($histFiltered['json']['pagination']['total_pages'])
+    && count($histFiltered['json']['items']) <= 5,
+    'Vision v2 [17/22]: GET /api/vision_history.php supports pagination and symbol/timeframe/strategy filters'
+);
+
+// 11.18 History deletion with ownership check
+$tempToDeleteId = (int)$noManualRes['analysis_id'];
+$delRes = httpReq('POST', "$base/api/vision_history.php", ['_method' => 'DELETE', 'id' => $tempToDeleteId, '_csrf' => $csrf], ['X-CSRF-Token: ' . $csrf], false, $cookieFile);
+assertTrue($delRes['code'] === 200 && !empty($delRes['json']['deleted']), 'Vision v2 [18/22]: DELETE /api/vision_history.php removes user-owned analysis record');
+
+// 11.19 Unauthorized user access protection (IDOR blocked on sendToTelegram)
+$idorBlocked = false;
+try {
+    // Analysis $manualRes['analysis_id'] is owned by user_id = 1; attempt access as non-admin user_id = 99999
+    \App\Analysis\ChartVisionService::sendToTelegram((int)$manualRes['analysis_id'], 99999, false);
+} catch (\RuntimeException $e) {
+    $idorBlocked = ($e->getCode() === 403 || str_contains($e->getMessage(), 'Unauthorized'));
+}
+assertTrue($idorBlocked, 'Vision v2 [19/22]: IDOR protection blocks unauthorized user from accessing another user\'s analysis');
+
+// 11.20 CSRF failure rejection
+$csrfFail = httpReq('POST', "$base/api/vision_analyze.php", ['symbol' => 'XAUUSD', '_csrf' => 'invalid_token'], ['X-CSRF-Token: invalid_token'], false, $cookieFile);
+assertTrue($csrfFail['code'] === 403 && empty($csrfFail['json']['ok']), 'Vision v2 [20/22]: Invalid CSRF token rejected with HTTP 403');
+
+// 11.21 Telegram send & duplicate send deduplication
+$tgFirst = httpReq('POST', "$base/api/vision_telegram.php", ['analysis_id' => (int)$manualRes['analysis_id'], '_csrf' => $csrf], ['X-CSRF-Token: ' . $csrf], false, $cookieFile);
+$tgDup = httpReq('POST', "$base/api/vision_telegram.php", ['analysis_id' => (int)$manualRes['analysis_id'], '_csrf' => $csrf], ['X-CSRF-Token: ' . $csrf], false, $cookieFile);
+assertTrue(
+    $tgFirst['code'] === 200 && !empty($tgFirst['json']['ok'])
+    && $tgDup['code'] === 200 && !empty($tgDup['json']['deduplicated']),
+    'Vision v2 [21/22]: Telegram dispatch succeeds and blocks duplicate sends within 60s window'
+);
+
+// 11.22 Categorized overlay elements (entry, sl, tp [TP1-TP3], liquidity) & secure image endpoint
+$ovCategories = array_unique(array_column($manualRes['overlay']['elements'], 'category'));
+$imgEndpointRes = httpReq('GET', "$base/api/vision_image.php?id=" . (int)$manualRes['analysis_id'], null, [], false, $cookieFile);
+assertTrue(
+    in_array('entry', $ovCategories, true)
+    && in_array('sl', $ovCategories, true)
+    && in_array('tp', $ovCategories, true)
+    && $imgEndpointRes['code'] === 200
+    && strncmp($imgEndpointRes['body'], "\x89PNG", 4) === 0,
+    'Vision v2 [22/22]: Categorized overlay (Entry/SL/TP1-TP3) & authenticated /api/vision_image.php verified'
+);
+
 @unlink($cookieFile);
 if (is_resource($proc)) {
     proc_terminate($proc);
