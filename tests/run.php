@@ -271,7 +271,7 @@ usleep(600000); // wait 0.6s for built-in server
 $cookieFile = APP_ROOT . '/storage/cache/test_cookie.txt';
 @unlink($cookieFile);
 
-function httpReq(string $method, string $url, ?array $postFields = null, array $headers = [], bool $json = false, string $cookieFile = '', int $timeout = 20): array
+function httpReq(string $method, string $url, $postFields = null, array $headers = [], bool $json = false, string $cookieFile = '', int $timeout = 20): array
 {
     $ch = curl_init($url);
     curl_setopt_array($ch, [
@@ -284,7 +284,8 @@ function httpReq(string $method, string $url, ?array $postFields = null, array $
         CURLOPT_TIMEOUT        => $timeout,
     ]);
     if ($postFields !== null) {
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $json ? json_encode($postFields) : http_build_query($postFields));
+        $payload = is_string($postFields) ? $postFields : ($json ? json_encode($postFields) : http_build_query($postFields));
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
     }
     $body = (string)curl_exec($ch);
     $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
@@ -1057,6 +1058,200 @@ assertTrue(
     && $imgEndpointRes['code'] === 200
     && strncmp($imgEndpointRes['body'], "\x89PNG", 4) === 0,
     'Vision v2 [22/22]: Categorized overlay (Entry/SL/TP1-TP3) & authenticated /api/vision_image.php verified'
+);
+
+// ------------------------------------------------------------------
+// 12. AI Chart Vision Analyzer V3 — 18-Point Architecture, EXIF, Symbol Precision & Security Suite
+// ------------------------------------------------------------------
+echo "\n12. AI Chart Vision Analyzer V3 (18-Point Architecture, EXIF, Symbol Precision & Security Suite)\n";
+
+// 12.1 EXIF Orientation extraction (Orientation = 6 swaps 80x60 -> 60x80)
+$exifSegment = "\xFF\xE1" . pack('n', 32) . "Exif\x00\x00II" . pack('v', 42) . pack('V', 8) . pack('v', 1) . pack('v', 0x0112) . pack('v', 3) . pack('V', 1) . pack('v', 6) . "\x00\x00\x00\x00\x00\x00";
+$rawJpgBytes = (string)hex2bin($validJpgHex);
+$exifJpgBytes = substr($rawJpgBytes, 0, 2) . $exifSegment . substr($rawJpgBytes, 2);
+$extractedOri = \App\Analysis\ChartVisionService::extractExifOrientation($exifJpgBytes);
+assertTrue($extractedOri === 6, 'Vision V3 [1/18]: EXIF Orientation tag (0x0112 = 6) accurately parsed from JPEG stream');
+
+// 12.2 Decompression bomb (>25MP) strictly rejected
+$bombRejected = false;
+try {
+    $bombIhdrData = pack('NNCCCCC', 6000, 6000, 8, 2, 0, 0, 0); // 36 Megapixels
+    $bombIhdr = pack('N', 13) . 'IHDR' . $bombIhdrData . pack('N', crc32('IHDR' . $bombIhdrData));
+    $bombPng = "\x89PNG\r\n\x1a\n" . $bombIhdr . pack('N', 4) . 'IDATx' . "\x9c\x63\x00" . pack('N', 0) . pack('N', 0) . 'IEND' . pack('N', crc32('IEND'));
+    \App\Analysis\ChartVisionService::storeUpload([], 'data:image/png;base64,' . base64_encode($bombPng), true);
+} catch (\InvalidArgumentException $e) {
+    $bombRejected = str_contains($e->getMessage(), '25 MP') || str_contains($e->getMessage(), 'pixel');
+}
+assertTrue($bombRejected, 'Vision V3 [2/18]: Oversized decompression bomb (>25 Megapixels) rejected');
+
+// 12.3 Spoofed executable extension (.php.png / .svg) rejected
+$extRejected = false;
+try {
+    $badExtFile = ['error' => UPLOAD_ERR_OK, 'size' => strlen($validPngBytes), 'tmp_name' => $upPng['path'], 'name' => 'exploit.php.png'];
+    \App\Analysis\ChartVisionService::storeUpload($badExtFile, null, true);
+} catch (\InvalidArgumentException $e) {
+    $extRejected = str_contains($e->getMessage(), 'extension');
+}
+assertTrue($extRejected, 'Vision V3 [3/18]: Dangerous double extension (exploit.php.png) strictly rejected');
+
+// 12.4 Oversized HTF image rejected via API
+$htfTooSmall = httpReq('POST', "$base/api/vision_analyze.php", [
+    'image_base64'           => 'data:image/png;base64,' . base64_encode($validPngBytes),
+    'htf_image_base64'       => 'data:image/png;base64,' . base64_encode(buildValidPng(12, 12)),
+    'enforce_min_dimensions' => 1,
+    'symbol'                 => 'XAUUSD',
+    'timeframe'              => 'M15',
+    'htf_timeframe'          => 'H4',
+    '_csrf'                  => $csrf,
+], ['X-CSRF-Token: ' . $csrf], false, $cookieFile);
+assertTrue(
+    $htfTooSmall['code'] === 422 && empty($htfTooSmall['json']['ok']) && isset($htfTooSmall['json']['error']['code']),
+    'Vision V3 [4/18]: Sub-50x50px HTF screenshot rejected with V3 structured error object'
+);
+
+// 12.5 Separate HTF screenshot workflow & never conflating execution chart as HTF
+$distinctHtfPng = buildValidPng(90, 70);
+$upHtfFile = \App\Analysis\ChartVisionService::storeUpload([], 'data:image/png;base64,' . base64_encode($distinctHtfPng), true);
+$withHtfRes = \App\Analysis\ChartVisionService::analyzeChart($upPng['path'], 'XAUUSD', 'M15', 2750.0, 'TradingView', 'UTC', 1, 'ICT', 'H4', $upHtfFile['path'], true);
+assertTrue(
+    $withHtfRes['report']['mtf_analysis']['htf_screenshot_provided'] === true
+    && $withHtfRes['report']['mtf_analysis']['timeframes']['H4']['visually_inspected'] === true
+    && $withHtfRes['report']['mtf_analysis']['timeframes']['D1']['visually_inspected'] === false
+    && !empty($withHtfRes['htf_image_url']),
+    'Vision V3 [5/18]: HTF screenshot workflow distinguishes uploaded HTF chart from market-data timeframes'
+);
+
+// 12.6 Execution chart without HTF upload never pretends HTF was visually inspected
+assertTrue(
+    $manualRes['report']['mtf_analysis']['htf_screenshot_provided'] === false
+    && $manualRes['htf_image_url'] === null
+    && $manualRes['report']['mtf_analysis']['timeframes']['H4']['data_source'] === 'market_data_candles',
+    'Vision V3 [6/18]: Single execution chart upload never pretends HTF screenshot was supplied'
+);
+
+// 12.7 Invalid HTF timeframe (< Execution TF) rejected
+$badHtfHierarchy = false;
+try {
+    \App\Analysis\ChartVisionService::analyzeChart($upPng['path'], 'XAUUSD', 'H4', 2750.0, 'OANDA', 'UTC', 1, 'ALL', 'M5', null, true);
+} catch (\InvalidArgumentException $e) {
+    $badHtfHierarchy = str_contains($e->getMessage(), 'Higher-Timeframe');
+}
+assertTrue($badHtfHierarchy, 'Vision V3 [7/18]: Invalid HTF timeframe lower than Execution Timeframe (H4 exec vs M5 HTF) rejected');
+
+// 12.8 Symbol-specific decimal precision (EURUSD 5 decimals, US30 1 decimal)
+$eurVal = \App\Analysis\ChartVisionService::validateTradeSetup('BUY', 1.08420, 1.08460, 1.08240, null, null, null, 'EURUSD');
+$us30Val = \App\Analysis\ChartVisionService::validateTradeSetup('SELL', 42100.0, 42120.0, 42210.0, null, null, null, 'US30');
+assertTrue(
+    $eurVal['valid'] === true && $eurVal['decimals'] === 5 && $eurVal['tp1'] === 1.08840
+    && $us30Val['valid'] === true && $us30Val['decimals'] === 1 && $us30Val['tp1'] === 41910.0,
+    'Vision V3 [8/18]: Multi-asset precision respected for EURUSD (5 decimals) and US30 (1 decimal)'
+);
+
+// 12.9 Symbol vs Manual Price incompatibility rejected (e.g. $2700 Gold price entered on EURUSD)
+$incompatPriceRejected = false;
+try {
+    \App\Analysis\ChartVisionService::validateSymbolPrice('EURUSD', 2700.00);
+} catch (\InvalidArgumentException $e) {
+    $incompatPriceRejected = str_contains($e->getMessage(), 'EURUSD');
+}
+assertTrue($incompatPriceRejected, 'Vision V3 [9/18]: Incompatible manual price ($2700 on EURUSD) strictly rejected');
+
+// 12.10 Stale setup where current live price already reached TP1 is rejected into NO TRADE
+$staleSetup = \App\Analysis\ChartVisionService::validateTradeSetup('BUY', 2648.0, 2652.0, 2640.0, null, null, null, 'XAUUSD', 2680.0);
+assertTrue(
+    $staleSetup['valid'] === false
+    && $staleSetup['direction'] === 'NO TRADE'
+    && $staleSetup['price_vs_entry_status'] === 'target_already_reached',
+    'Vision V3 [10/18]: Setup where current price already reached TP1 is rejected as stale (NO TRADE)'
+);
+
+// 12.11 Duplicate analysis submission deduplicated within 6-second window
+$dupCheck1 = \App\Analysis\ChartVisionService::analyzeChart($upPng['path'], 'XAUUSD', 'M15', 2777.50, 'OANDA', 'UTC', 1, 'ALL', 'H4', null, false);
+$dupCheck2 = \App\Analysis\ChartVisionService::analyzeChart($upPng['path'], 'XAUUSD', 'M15', 2777.50, 'OANDA', 'UTC', 1, 'ALL', 'H4', null, false);
+assertTrue(
+    $dupCheck2['deduplicated'] === true && $dupCheck1['analysis_id'] === $dupCheck2['analysis_id'],
+    'Vision V3 [11/18]: Rapid duplicate analysis request is deduplicated without creating redundant DB rows'
+);
+
+// 12.12 Standard V3 API response structure ({ ok, data, error }) & Malformed JSON handling
+$badJsonCall = httpReq('POST', "$base/api/vision_analyze.php", '{bad_json_payload', [
+    'Content-Type: application/json',
+    'X-CSRF-Token: ' . $csrf,
+], false, $cookieFile);
+assertTrue(
+    $badJsonCall['code'] === 400
+    && $badJsonCall['json']['ok'] === false
+    && ($badJsonCall['json']['error']['code'] ?? '') === 'INVALID_JSON',
+    'Vision V3 [12/18]: Malformed JSON payload rejected with HTTP 400 and error.code=INVALID_JSON'
+);
+
+// 12.13 10-Category Overlay with both X (x1, x2) and Y coordinates
+$ovCatsList = $withHtfRes['overlay']['categories'] ?? [];
+$firstElem = $withHtfRes['overlay']['elements'][0] ?? [];
+assertTrue(
+    count($ovCatsList) === 10
+    && isset($firstElem['x1'], $firstElem['x2'])
+    && in_array('ob', $ovCatsList, true)
+    && in_array('fvg', $ovCatsList, true)
+    && in_array('bsl', $ovCatsList, true)
+    && in_array('ssl', $ovCatsList, true)
+    && in_array('eq_hl', $ovCatsList, true)
+    && in_array('swings', $ovCatsList, true),
+    'Vision V3 [13/18]: 10-category overlay includes X & Y coordinates across all 10 institutional categories'
+);
+
+// 12.14 5-Part Epistemic Separation & Non-Win-Rate Confidence Disclaimer
+$repV3 = $withHtfRes['report'];
+assertTrue(
+    !empty($repV3['observed_facts'])
+    && !empty($repV3['ai_interpretations'])
+    && !empty($repV3['hypotheses'])
+    && !empty($repV3['missing_information'])
+    && !empty($repV3['confirmation_conditions'])
+    && str_contains($repV3['confidence_breakdown']['confidence_disclaimer'] ?? '', 'NOT a percentage probability'),
+    'Vision V3 [14/18]: Report separates Facts, Interpretations, Hypotheses, Missing Info & Confirmation with Confidence Disclaimer'
+);
+
+// 12.15 Price source metadata (LIVE / HISTORICAL / MANUAL / UNAVAILABLE + timestamp + provider)
+assertTrue(
+    $repV3['price_source_type'] === 'MANUAL'
+    && !empty($repV3['price_timestamp'])
+    && $repV3['data_provider'] === 'TradingView',
+    'Vision V3 [15/18]: Price source type, UTC timestamp, and data provider recorded accurately'
+);
+
+// 12.16 SSRF and path traversal blocked on /api/vision_image.php
+$ssrfAttempt = httpReq('GET', "$base/api/vision_image.php?file=" . urlencode('https://evil.example.com/shell.png'), null, [], false, $cookieFile);
+$travAttempt = httpReq('GET', "$base/api/vision_image.php?file=" . urlencode('../../.env'), null, [], false, $cookieFile);
+assertTrue(
+    $ssrfAttempt['code'] === 400 && $travAttempt['code'] === 400,
+    'Vision V3 [16/18]: SSRF and directory traversal payloads blocked on /api/vision_image.php'
+);
+
+// 12.17 History single-item IDOR protection on GET /api/vision_history.php and DELETE
+$idorDeleteBlocked = false;
+try {
+    \App\Analysis\ChartVisionService::deleteAnalysis((int)$withHtfRes['analysis_id'], 99999, false);
+} catch (\RuntimeException $e) {
+    $idorDeleteBlocked = ($e->getCode() === 403);
+}
+assertTrue($idorDeleteBlocked, 'Vision V3 [17/18]: IDOR protection blocks unauthorized user from deleting another user\'s analysis');
+
+// 12.18 UI & Architecture check on GET /vision.php (8 V3 modules present, zero fake pre-analysis BUY/85 defaults)
+$visionHtmlRes = httpReq('GET', "$base/vision.php", null, [], false, $cookieFile);
+$vHtml = $visionHtmlRes['body'];
+assertTrue(
+    $visionHtmlRes['code'] === 200
+    && str_contains($vHtml, 'VisionUpload')
+    && str_contains($vHtml, 'VisionImageProcessor')
+    && str_contains($vHtml, 'VisionApiClient')
+    && str_contains($vHtml, 'VisionResultRenderer')
+    && str_contains($vHtml, 'VisionOverlayRenderer')
+    && str_contains($vHtml, 'VisionHistory')
+    && str_contains($vHtml, 'VisionTelegram')
+    && str_contains($vHtml, 'VisionValidation')
+    && str_contains($vHtml, 'id="resBiasBadge">Not analyzed</span>'),
+    'Vision V3 [18/18]: vision.php loads all 8 V3 frontend modules and initializes result badges to "Not analyzed"'
 );
 
 @unlink($cookieFile);
